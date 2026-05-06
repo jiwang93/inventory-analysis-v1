@@ -1,0 +1,6 @@
+{
+  "name": "Inventory Insight (库存透视分析)",
+  "description": "专业的库位库存分析工具，支持 Excel 上传、自动化数据分组统计及结果导出。",
+  "requestFramePermissions": [],
+  "majorCapabilities": []
+}
