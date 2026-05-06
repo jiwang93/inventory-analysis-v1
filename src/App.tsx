@@ -41,8 +41,7 @@ interface AnalysisResult {
 
 interface MixedPowerAlert {
   location: string;
-  boxNo: string;
-  powers: string[];
+  powerDetails: Record<string, string[]>; // PowerGrade -> List of BoxNumbers
 }
 
 export default function App() {
@@ -99,8 +98,8 @@ export default function App() {
 
   const performAnalysis = (rows: InventoryRow[]) => {
     const locationMap: Record<string, Set<string | number>> = {};
-    // 功率检测映射: 库位 + 箱号 -> 功率档组成的 Set
-    const powerCheckMap: Record<string, Set<string>> = {};
+    // 功率检测：库位 -> { 功率档 -> [箱号] }
+    const locationPowerData: Record<string, Record<string, Set<string>>> = {};
 
     // 1. 初始化固定的 C-H (1-60) 库位
     const zones = ['C', 'D', 'E', 'F', 'G', 'H'];
@@ -108,6 +107,7 @@ export default function App() {
       for (let i = 1; i <= 60; i++) {
         const locName = `${zone}${String(i).padStart(2, '0')}`;
         locationMap[locName] = new Set();
+        locationPowerData[locName] = {};
       }
     });
 
@@ -126,18 +126,18 @@ export default function App() {
       
       if (!locationMap[loc]) {
         locationMap[loc] = new Set();
+        locationPowerData[loc] = {};
       }
 
       if (box !== undefined && box !== null && String(box).trim() !== '') {
         const boxStr = String(box);
         locationMap[loc].add(boxStr);
 
-        // 混档检测逻辑
-        const comboKey = `${loc}||${boxStr}`;
-        if (!powerCheckMap[comboKey]) {
-          powerCheckMap[comboKey] = new Set();
+        // 记录库位下的功率分布
+        if (!locationPowerData[loc][power]) {
+          locationPowerData[loc][power] = new Set();
         }
-        powerCheckMap[comboKey].add(power);
+        locationPowerData[loc][power].add(boxStr);
       }
     });
 
@@ -151,7 +151,7 @@ export default function App() {
       };
     });
 
-    // 排序
+    // 排序逻辑保持不变...
     analysisResults.sort((a, b) => {
       const nameA = a['库位名称'];
       const nameB = b['库位名称'];
@@ -180,15 +180,18 @@ export default function App() {
       return nameA.localeCompare(nameB);
     });
 
-    // 处理混档警告
+    // 处理混档警告 (库位内功率档种类 > 1)
     const alerts: MixedPowerAlert[] = [];
-    Object.entries(powerCheckMap).forEach(([key, powerSet]) => {
-      if (powerSet.size > 1) {
-        const [loc, box] = key.split('||');
+    Object.entries(locationPowerData).forEach(([loc, powers]) => {
+      const powerGrades = Object.keys(powers);
+      if (powerGrades.length > 1) {
+        const powerDetails: Record<string, string[]> = {};
+        powerGrades.forEach(p => {
+          powerDetails[p] = Array.from(powers[p]);
+        });
         alerts.push({
           location: loc,
-          boxNo: box,
-          powers: Array.from(powerSet)
+          powerDetails
         });
       }
     });
@@ -264,6 +267,50 @@ export default function App() {
     const buffer = await workbook.xlsx.writeBuffer();
     const blob = new Blob([buffer], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
     saveAs(blob, `库位统计分析_${new Date().toISOString().split('T')[0]}.xlsx`);
+  };
+
+  const exportAlertsToExcel = async () => {
+    if (mixedPowerAlerts.length === 0) return;
+
+    const workbook = new ExcelJS.Workbook();
+    const worksheet = workbook.addWorksheet('混档异常明细');
+
+    worksheet.columns = [
+      { header: '异常库位', key: 'location', width: 20 },
+      { header: '功率档', key: 'power', width: 15 },
+      { header: '包含箱号', key: 'boxes', width: 80 }
+    ];
+
+    mixedPowerAlerts.forEach((alert) => {
+      Object.entries(alert.powerDetails).forEach(([power, boxes]) => {
+        const excelRow = worksheet.addRow({
+          location: alert.location,
+          power: power,
+          boxes: boxes.join(', ')
+        });
+
+        // 样式设置
+        excelRow.eachCell((cell) => {
+          cell.font = { color: { argb: 'FFEF4444' } }; // 红色字体
+          cell.alignment = { vertical: 'middle', horizontal: 'left', wrapText: true };
+        });
+      });
+      // 插入一个空行作为分隔
+      worksheet.addRow({});
+    });
+
+    // 表头样式
+    const headerRow = worksheet.getRow(1);
+    headerRow.height = 30;
+    headerRow.eachCell((cell) => {
+      cell.font = { bold: true, color: { argb: 'FFFFFFFF' } };
+      cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFEF4444' } };
+      cell.alignment = { vertical: 'middle', horizontal: 'center' };
+    });
+
+    const buffer = await workbook.xlsx.writeBuffer();
+    const blob = new Blob([buffer], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
+    saveAs(blob, `库存混档异常报告_${new Date().toISOString().split('T')[0]}.xlsx`);
   };
 
   const reset = () => {
@@ -495,31 +542,56 @@ export default function App() {
                     )}
                   >
                     <div className="flex items-center justify-between mb-4">
-                      <h4 className="text-sm font-bold flex items-center gap-2">
-                        <AlertCircle className={cn("w-4 h-4", mixedPowerAlerts.length > 0 ? "text-red-500" : "text-slate-400")} />
-                        混档检测异常
-                      </h4>
+                      <div className="flex items-center gap-2">
+                        <h4 className="text-sm font-bold flex items-center gap-2">
+                          <AlertCircle className={cn("w-4 h-4", mixedPowerAlerts.length > 0 ? "text-red-500" : "text-slate-400")} />
+                          混档检测异常
+                        </h4>
+                        {mixedPowerAlerts.length > 0 && (
+                          <button 
+                            onClick={exportAlertsToExcel}
+                            className="p-1.5 hover:bg-red-100 text-red-600 rounded-lg transition-colors group/btn"
+                            title="导出异常明细"
+                          >
+                            <Download className="w-3.5 h-3.5" />
+                          </button>
+                        )}
+                      </div>
                       <span className={cn("text-xl font-black", mixedPowerAlerts.length > 0 ? "text-red-600" : "text-slate-400")}>
                         {mixedPowerAlerts.length}
                       </span>
                     </div>
                     <div className="max-h-24 overflow-y-auto pr-2 scrollbar-thin">
                       {mixedPowerAlerts.length > 0 ? (
-                        <div className="space-y-2">
+                        <div className="space-y-3">
                           {mixedPowerAlerts.map((alert, i) => (
-                            <div key={i} className="flex flex-col p-2 bg-white/50 rounded-lg border border-red-100 text-[10px]">
-                              <div className="flex justify-between font-bold text-slate-800">
-                                <span>库位: {alert.location}</span>
-                                <span className="text-red-600">箱号: {alert.boxNo}</span>
+                            <div key={i} className="flex flex-col p-3 bg-white rounded-xl border border-red-200 text-[10px] shadow-sm">
+                              <div className="flex justify-between font-bold text-slate-800 mb-2 pb-2 border-b border-red-50">
+                                <span className="flex items-center gap-1">
+                                  <MapPin className="w-3 h-3 text-red-500" />
+                                  库位: {alert.location}
+                                </span>
+                                <span className="text-red-600 uppercase">发现 {Object.keys(alert.powerDetails).length} 档功率</span>
                               </div>
-                              <div className="text-slate-500 mt-1 uppercase tracking-tighter">
-                                涉及功率: {alert.powers.join(', ')}
+                              <div className="space-y-2">
+                                {Object.entries(alert.powerDetails).map(([p, boxes]) => (
+                                  <div key={p} className="flex flex-col gap-1">
+                                    <div className="flex items-center gap-1.5">
+                                      <span className="w-1.5 h-1.5 rounded-full bg-slate-400" />
+                                      <span className="font-bold text-slate-600">功率 [{p}]:</span>
+                                      <span className="text-slate-400">({boxes.length} 箱)</span>
+                                    </div>
+                                    <div className="text-slate-400 pl-3 leading-relaxed break-all font-mono">
+                                      {boxes.join(', ')}
+                                    </div>
+                                  </div>
+                                ))}
                               </div>
                             </div>
                           ))}
                         </div>
                       ) : (
-                        <p className="text-slate-400 text-xs italic">全量数据功率校验正常，未发现混档。</p>
+                        <p className="text-slate-400 text-xs italic">库位功率校验正常，未发现混档。</p>
                       )}
                     </div>
                   </motion.div>
