@@ -18,6 +18,8 @@ import {
   Hash,
   MapPin,
   Box,
+  Package,
+  History,
   BarChart3,
   Loader2
 } from 'lucide-react';
@@ -29,6 +31,7 @@ interface InventoryRow {
   '库位名称': string;
   '功率档'?: string | number;
   '工单号'?: string | number;
+  '销售单号'?: string | number;
   '箱等级'?: string;
   '箱条码数'?: number;
 }
@@ -41,7 +44,12 @@ interface AnalysisResult {
 
 interface MixedPowerAlert {
   location: string;
-  powerDetails: Record<string, string[]>; // PowerGrade -> List of BoxNumbers
+  powerDetails: Record<string, string[]>; 
+}
+
+interface MixedOrderAlert {
+  location: string;
+  orderDetails: Record<string, string[]>; // OrderNo -> List of BoxNumbers
 }
 
 export default function App() {
@@ -49,6 +57,7 @@ export default function App() {
   const [data, setData] = useState<InventoryRow[]>([]);
   const [results, setResults] = useState<AnalysisResult[]>([]);
   const [mixedPowerAlerts, setMixedPowerAlerts] = useState<MixedPowerAlert[]>([]);
+  const [mixedOrderAlerts, setMixedOrderAlerts] = useState<MixedOrderAlert[]>([]);
   const [isProcessing, setIsProcessing] = useState(false);
   const [fileName, setFileName] = useState('');
   const [error, setError] = useState<string | null>(null);
@@ -100,6 +109,8 @@ export default function App() {
     const locationMap: Record<string, Set<string | number>> = {};
     // 功率检测：库位 -> { 功率档 -> [箱号] }
     const locationPowerData: Record<string, Record<string, Set<string>>> = {};
+    // 工单监测：库位 -> { 工单号 -> [箱号] }
+    const locationOrderData: Record<string, Record<string, Set<string>>> = {};
 
     // 1. 初始化固定的 C-H (1-60) 库位
     const zones = ['C', 'D', 'E', 'F', 'G', 'H'];
@@ -108,6 +119,7 @@ export default function App() {
         const locName = `${zone}${String(i).padStart(2, '0')}`;
         locationMap[locName] = new Set();
         locationPowerData[locName] = {};
+        locationOrderData[locName] = {};
       }
     });
 
@@ -123,10 +135,12 @@ export default function App() {
 
       const box = row['箱号'];
       const power = String(row['功率档'] || '未知').trim();
+      const orderNo = String(row['工单号'] || row['销售单号'] || '空单号').trim();
       
       if (!locationMap[loc]) {
         locationMap[loc] = new Set();
         locationPowerData[loc] = {};
+        locationOrderData[loc] = {};
       }
 
       if (box !== undefined && box !== null && String(box).trim() !== '') {
@@ -138,6 +152,12 @@ export default function App() {
           locationPowerData[loc][power] = new Set();
         }
         locationPowerData[loc][power].add(boxStr);
+
+        // 记录库位下的工单分布
+        if (!locationOrderData[loc][orderNo]) {
+          locationOrderData[loc][orderNo] = new Set();
+        }
+        locationOrderData[loc][orderNo].add(boxStr);
       }
     });
 
@@ -196,8 +216,25 @@ export default function App() {
       }
     });
 
+    // 处理工单混载警告
+    const orderAlerts: MixedOrderAlert[] = [];
+    Object.entries(locationOrderData).forEach(([loc, orders]) => {
+      const orderNos = Object.keys(orders);
+      if (orderNos.length > 1) {
+        const orderDetails: Record<string, string[]> = {};
+        orderNos.forEach(o => {
+          orderDetails[o] = Array.from(orders[o]);
+        });
+        orderAlerts.push({
+          location: loc,
+          orderDetails
+        });
+      }
+    });
+
     setResults(analysisResults);
     setMixedPowerAlerts(alerts);
+    setMixedOrderAlerts(orderAlerts);
   };
 
   const handleFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -313,10 +350,52 @@ export default function App() {
     saveAs(blob, `库存混档异常报告_${new Date().toISOString().split('T')[0]}.xlsx`);
   };
 
+  const exportOrdersToExcel = async () => {
+    if (mixedOrderAlerts.length === 0) return;
+
+    const workbook = new ExcelJS.Workbook();
+    const worksheet = workbook.addWorksheet('工单混载明细');
+
+    worksheet.columns = [
+      { header: '库位名称', key: 'location', width: 20 },
+      { header: '工单号', key: 'order', width: 25 },
+      { header: '包含箱号', key: 'boxes', width: 80 }
+    ];
+
+    mixedOrderAlerts.forEach((alert) => {
+      Object.entries(alert.orderDetails).forEach(([order, boxes]) => {
+        const excelRow = worksheet.addRow({
+          location: alert.location,
+          order: order,
+          boxes: boxes.join(', ')
+        });
+
+        excelRow.eachCell((cell) => {
+          cell.font = { color: { argb: 'FF2563EB' } }; // 蓝色字体
+          cell.alignment = { vertical: 'middle', horizontal: 'left', wrapText: true };
+        });
+      });
+      worksheet.addRow({});
+    });
+
+    const headerRow = worksheet.getRow(1);
+    headerRow.height = 30;
+    headerRow.eachCell((cell) => {
+      cell.font = { bold: true, color: { argb: 'FFFFFFFF' } };
+      cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FF2563EB' } };
+      cell.alignment = { vertical: 'middle', horizontal: 'center' };
+    });
+
+    const buffer = await workbook.xlsx.writeBuffer();
+    const blob = new Blob([buffer], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
+    saveAs(blob, `工单混载预警报告_${new Date().toISOString().split('T')[0]}.xlsx`);
+  };
+
   const reset = () => {
     setData([]);
     setResults([]);
     setMixedPowerAlerts([]);
+    setMixedOrderAlerts([]);
     setFileName('');
     setError(null);
   };
@@ -501,33 +580,61 @@ export default function App() {
             <div className="col-span-12 xl:col-span-8 flex flex-col gap-6 h-full min-h-[600px]">
               {/* Summary Insights */}
               {results.length > 0 && (
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-6 shrink-0">
-                  {/* Empty Locations Summary */}
+                <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 shrink-0">
+                  {/* Warehouse Overview Info */}
                   <motion.div 
                     initial={{ opacity: 0, y: 10 }}
                     animate={{ opacity: 1, y: 0 }}
                     transition={{ delay: 0.1 }}
                     className="bg-white rounded-3xl p-6 border border-slate-200 shadow-sm"
                   >
-                    <div className="flex items-center justify-between mb-4">
-                      <h4 className="text-sm font-bold text-slate-800 flex items-center gap-2">
-                        <CheckCircle2 className="w-4 h-4 text-emerald-500" />
-                        完整可用库位 (容量18)
-                      </h4>
-                      <span className="text-xl font-black text-blue-600">
-                        {results.filter(r => r['箱号数量'] === 0).length}
-                      </span>
-                    </div>
-                    <div className="max-h-24 overflow-y-auto pr-2 scrollbar-thin flex flex-wrap gap-2 text-[10px]">
-                      {results.filter(r => r['箱号数量'] === 0).length > 0 ? (
-                        results.filter(r => r['箱号数量'] === 0).map(r => (
-                          <span key={r['库位名称']} className="px-2 py-1 bg-slate-50 text-slate-500 rounded border border-slate-100 font-mono">
-                            {r['库位名称']}
+                    <div className="flex flex-col gap-4">
+                      <div className="flex items-center justify-between pb-4 border-b border-slate-50">
+                        <h4 className="text-sm font-bold text-slate-800 flex items-center gap-2">
+                          <BarChart3 className="w-4 h-4 text-blue-500" />
+                          库存概览
+                        </h4>
+                        <div className="flex gap-2">
+                          <span className="px-2 py-0.5 bg-blue-50 text-blue-600 text-[10px] font-bold rounded-full">
+                            库位: {results.length}
                           </span>
-                        ))
-                      ) : (
-                        <span className="text-slate-400 italic">暂无完全空置库位</span>
-                      )}
+                        </div>
+                      </div>
+                      
+                      <div className="grid grid-cols-2 gap-4">
+                        <div className="bg-slate-50 rounded-2xl p-3">
+                          <div className="text-[10px] text-slate-400 font-bold mb-1">当前箱号总数</div>
+                          <div className="text-lg font-black text-slate-900">
+                            {results.reduce((acc, curr) => acc + curr['箱号数量'], 0)}
+                          </div>
+                        </div>
+                        <div className="bg-emerald-50 rounded-2xl p-3">
+                          <div className="text-[10px] text-emerald-600 font-bold mb-1">剩余可入位</div>
+                          <div className="text-lg font-black text-emerald-700">
+                            {results.reduce((acc, curr) => acc + (curr['可入库数量'] > 0 ? curr['可入库数量'] : 0), 0)}
+                          </div>
+                        </div>
+                      </div>
+
+                      <div className="space-y-2">
+                        <div className="flex items-center justify-between text-[10px] font-bold">
+                          <span className="text-slate-400 uppercase tracking-wider flex items-center gap-1">
+                            <CheckCircle2 className="w-3 h-3 text-emerald-500" />
+                            完整可用库位 ({results.filter(r => r['箱号数量'] === 0).length})
+                          </span>
+                        </div>
+                        <div className="max-h-16 overflow-y-auto pr-2 scrollbar-thin flex flex-wrap gap-1.5 text-[9px]">
+                          {results.filter(r => r['箱号数量'] === 0).length > 0 ? (
+                            results.filter(r => r['箱号数量'] === 0).map(r => (
+                              <span key={r['库位名称']} className="px-1.5 py-0.5 bg-white text-slate-500 rounded border border-slate-100 font-mono">
+                                {r['库位名称']}
+                              </span>
+                            ))
+                          ) : (
+                            <span className="text-slate-400 italic">暂无空置库位</span>
+                          )}
+                        </div>
+                      </div>
                     </div>
                   </motion.div>
 
@@ -543,15 +650,15 @@ export default function App() {
                   >
                     <div className="flex items-center justify-between mb-4">
                       <div className="flex items-center gap-2">
-                        <h4 className="text-sm font-bold flex items-center gap-2">
+                        <h4 className="text-sm font-bold flex items-center gap-2 text-nowrap">
                           <AlertCircle className={cn("w-4 h-4", mixedPowerAlerts.length > 0 ? "text-red-500" : "text-slate-400")} />
-                          混档检测异常
+                          功率混档监测
                         </h4>
                         {mixedPowerAlerts.length > 0 && (
                           <button 
                             onClick={exportAlertsToExcel}
                             className="p-1.5 hover:bg-red-100 text-red-600 rounded-lg transition-colors group/btn"
-                            title="导出异常明细"
+                            title="导出混档异常"
                           >
                             <Download className="w-3.5 h-3.5" />
                           </button>
@@ -566,24 +673,15 @@ export default function App() {
                         <div className="space-y-3">
                           {mixedPowerAlerts.map((alert, i) => (
                             <div key={i} className="flex flex-col p-3 bg-white rounded-xl border border-red-200 text-[10px] shadow-sm">
-                              <div className="flex justify-between font-bold text-slate-800 mb-2 pb-2 border-b border-red-50">
-                                <span className="flex items-center gap-1">
-                                  <MapPin className="w-3 h-3 text-red-500" />
-                                  库位: {alert.location}
-                                </span>
-                                <span className="text-red-600 uppercase">发现 {Object.keys(alert.powerDetails).length} 档功率</span>
+                              <div className="font-bold text-slate-800 mb-2 flex items-center gap-1">
+                                <Box className="w-3 h-3 text-red-400" />
+                                {alert.location}
                               </div>
-                              <div className="space-y-2">
-                                {Object.entries(alert.powerDetails).map(([p, boxes]) => (
-                                  <div key={p} className="flex flex-col gap-1">
-                                    <div className="flex items-center gap-1.5">
-                                      <span className="w-1.5 h-1.5 rounded-full bg-slate-400" />
-                                      <span className="font-bold text-slate-600">功率 [{p}]:</span>
-                                      <span className="text-slate-400">({boxes.length} 箱)</span>
-                                    </div>
-                                    <div className="text-slate-400 pl-3 leading-relaxed break-all font-mono">
-                                      {boxes.join(', ')}
-                                    </div>
+                              <div className="space-y-1">
+                                {Object.keys(alert.powerDetails).map(p => (
+                                  <div key={p} className="flex items-center justify-between text-slate-500">
+                                    <span>功率 {p}</span>
+                                    <span className="font-mono text-red-600 bg-red-50 px-1.5 rounded">{alert.powerDetails[p].length}箱</span>
                                   </div>
                                 ))}
                               </div>
@@ -591,7 +689,63 @@ export default function App() {
                           ))}
                         </div>
                       ) : (
-                        <p className="text-slate-400 text-xs italic">库位功率校验正常，未发现混档。</p>
+                        <p className="text-slate-400 text-xs italic">库位功率一致性良好</p>
+                      )}
+                    </div>
+                  </motion.div>
+
+                  {/* Mixed Order Alerts Summary */}
+                  <motion.div 
+                    initial={{ opacity: 0, y: 10 }}
+                    animate={{ opacity: 1, y: 0 }}
+                    transition={{ delay: 0.3 }}
+                    className={cn(
+                      "rounded-3xl p-6 border shadow-sm",
+                      mixedOrderAlerts.length > 0 ? "bg-blue-50 border-blue-100" : "bg-white border-slate-200"
+                    )}
+                  >
+                    <div className="flex items-center justify-between mb-4">
+                      <div className="flex items-center gap-2">
+                        <h4 className="text-sm font-bold flex items-center gap-2 text-nowrap">
+                          <History className={cn("w-4 h-4", mixedOrderAlerts.length > 0 ? "text-blue-500" : "text-slate-400")} />
+                          工单混载监测
+                        </h4>
+                        {mixedOrderAlerts.length > 0 && (
+                          <button 
+                            onClick={exportOrdersToExcel}
+                            className="p-1.5 hover:bg-blue-100 text-blue-600 rounded-lg transition-colors group/btn"
+                            title="导出工单混载"
+                          >
+                            <Download className="w-3.5 h-3.5" />
+                          </button>
+                        )}
+                      </div>
+                      <span className={cn("text-xl font-black", mixedOrderAlerts.length > 0 ? "text-blue-600" : "text-slate-400")}>
+                        {mixedOrderAlerts.length}
+                      </span>
+                    </div>
+                    <div className="max-h-24 overflow-y-auto pr-2 scrollbar-thin">
+                      {mixedOrderAlerts.length > 0 ? (
+                        <div className="space-y-3">
+                          {mixedOrderAlerts.map((alert, i) => (
+                            <div key={i} className="flex flex-col p-3 bg-white rounded-xl border border-blue-200 text-[10px] shadow-sm">
+                              <div className="font-bold text-slate-800 mb-2 flex items-center gap-1">
+                                <Package className="w-3 h-3 text-blue-400" />
+                                {alert.location}
+                              </div>
+                              <div className="space-y-1">
+                                {Object.keys(alert.orderDetails).map(o => (
+                                  <div key={o} className="flex items-center justify-between text-slate-500">
+                                    <span className="truncate max-w-[100px]" title={o}>{o}</span>
+                                    <span className="font-mono text-blue-600 bg-blue-50 px-1.5 rounded">{alert.orderDetails[o].length}箱</span>
+                                  </div>
+                                ))}
+                              </div>
+                            </div>
+                          ))}
+                        </div>
+                      ) : (
+                        <p className="text-slate-400 text-xs italic">库位工单单一，未发现混载</p>
                       )}
                     </div>
                   </motion.div>
