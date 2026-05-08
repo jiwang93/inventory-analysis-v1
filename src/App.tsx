@@ -24,6 +24,7 @@ import {
   Loader2
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
+import { jsPDF } from 'jspdf';
 import { cn } from './lib/utils';
 
 interface InventoryRow {
@@ -391,6 +392,72 @@ export default function App() {
     saveAs(blob, `工单混载预警报告_${new Date().toISOString().split('T')[0]}.xlsx`);
   };
 
+  const generateLabelsPDF = (locationName: string) => {
+    const doc = new jsPDF({
+      orientation: 'portrait',
+      unit: 'mm',
+      format: 'letter'
+    });
+
+    const pageWidth = 215.9;
+    const pageHeight = 279.4;
+    const labelHeight = pageHeight / 3;
+
+    for (let p = 0; p < 3; p++) {
+      if (p > 0) doc.addPage();
+      
+      for (let l = 0; l < 3; l++) {
+        const labelIndex = p * 3 + l + 1;
+        const suffix = `-${labelIndex}`;
+        const yOffset = l * labelHeight;
+
+        // Configuration
+        const baseFontSize = 140; // Extremely large for the main location
+        const suffixFontSize = 60; // Smaller for the index
+        const dateFontSize = 14;
+
+        // Set font for calculations
+        doc.setFont('helvetica', 'bold');
+        
+        // Calculate widths to center the combined string
+        doc.setFontSize(baseFontSize);
+        const baseWidth = doc.getTextWidth(locationName);
+        doc.setFontSize(suffixFontSize);
+        const suffixWidth = doc.getTextWidth(suffix);
+        
+        const totalWidth = baseWidth + suffixWidth + 2; // +2 for a tiny spacing
+        const startX = (pageWidth - totalWidth) / 2;
+        const centerY = yOffset + (labelHeight / 2) + 10;
+
+        // Draw Location Name (Large)
+        doc.setTextColor(15, 23, 42); // Slate 900
+        doc.setFontSize(baseFontSize);
+        doc.text(locationName, startX, centerY);
+        
+        // Draw Suffix (Smaller)
+        doc.setFontSize(suffixFontSize);
+        doc.text(suffix, startX + baseWidth + 2, centerY);
+        
+        // Date text - Slightly adjusted secondary text
+        doc.setFontSize(dateFontSize);
+        doc.setFont('helvetica', 'normal');
+        doc.setTextColor(100);
+        const dateText = `Printed: ${new Date().toLocaleDateString()} ${new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}`;
+        const dateWidth = doc.getTextWidth(dateText);
+        doc.text(dateText, (pageWidth - dateWidth) / 2, yOffset + labelHeight - 15);
+
+        // Separation line
+        doc.setDrawColor(220);
+        doc.setLineWidth(0.3);
+        if (l < 2) {
+          doc.line(20, yOffset + labelHeight, pageWidth - 20, yOffset + labelHeight);
+        }
+      }
+    }
+
+    doc.save(`标签_${locationName}_L9.pdf`);
+  };
+
   const reset = () => {
     setData([]);
     setResults([]);
@@ -626,9 +693,15 @@ export default function App() {
                         <div className="max-h-16 overflow-y-auto pr-2 scrollbar-thin flex flex-wrap gap-1.5 text-[9px]">
                           {results.filter(r => r['箱号数量'] === 0).length > 0 ? (
                             results.filter(r => r['箱号数量'] === 0).map(r => (
-                              <span key={r['库位名称']} className="px-1.5 py-0.5 bg-white text-slate-500 rounded border border-slate-100 font-mono">
+                              <button 
+                                key={r['库位名称']} 
+                                onClick={() => generateLabelsPDF(r['库位名称'])}
+                                className="px-2 py-0.5 bg-white text-slate-500 rounded-md border border-slate-200 font-mono shadow-sm hover:border-emerald-400 hover:text-emerald-600 hover:shadow-md transition-all active:scale-95 group/tag inline-flex items-center gap-1"
+                                title="点击生成 PDF 标签"
+                              >
                                 {r['库位名称']}
-                              </span>
+                                <FileText className="w-2.5 h-2.5 opacity-0 group-hover/tag:opacity-100 transition-opacity" />
+                              </button>
                             ))
                           ) : (
                             <span className="text-slate-400 italic">暂无空置库位</span>
