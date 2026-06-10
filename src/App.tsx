@@ -41,6 +41,7 @@ interface AnalysisResult {
   '库位名称': string;
   '箱号数量': number;
   '可入库数量': number;
+  '客户分布'?: Record<string, number>;
 }
 
 interface MixedPowerAlert {
@@ -304,10 +305,18 @@ export default function App() {
     // 汇总分析结果
     const analysisResults: AnalysisResult[] = Object.entries(locationMap).map(([location, boxSet]) => {
       const boxCount = boxSet.size;
+      const customerMapForLoc = locationCustomerData[location] || {};
+      const customersDist: Record<string, number> = {};
+      Object.entries(customerMapForLoc).forEach(([cust, boxes]) => {
+        if (boxes.size > 0) {
+          customersDist[cust] = boxes.size;
+        }
+      });
       return {
         '库位名称': location,
         '箱号数量': boxCount,
-        '可入库数量': STANDARD_CAPACITY - boxCount
+        '可入库数量': STANDARD_CAPACITY - boxCount,
+        '客户分布': customersDist
       };
     });
  
@@ -453,23 +462,54 @@ export default function App() {
   const exportToExcel = async () => {
     if (results.length === 0) return;
     
-    const workbook = new ExcelJS.Workbook();
-    const worksheet = workbook.addWorksheet('库位统计');
+    // 找出所有存在于结果中的唯一客户名称
+    const uniqueCustomersSet = new Set<string>();
+    results.forEach((row) => {
+      const dist = row['客户分布'];
+      if (dist) {
+        Object.keys(dist).forEach((cust) => {
+          if (cust && cust.trim() !== '') {
+            uniqueCustomersSet.add(cust.trim());
+          }
+        });
+      }
+    });
+    const uniqueCustomers = Array.from(uniqueCustomersSet).sort();
 
-    // 定义列
-    worksheet.columns = [
+    const workbook = new ExcelJS.Workbook();
+    const worksheet = workbook.addWorksheet('库位统计分析');
+
+    // 1. 定义基础列
+    const baseColumns = [
       { header: '库位名称', key: 'location', width: 20 },
       { header: '箱号数量', key: 'count', width: 15 },
-      { header: '可入库数量 (标准18)', key: 'available', width: 25 }
+      { header: '可入库数量 (标准18)', key: 'available', width: 25 },
     ];
+
+    // 2. 为每个客户动态追加一列
+    const customerColumns = uniqueCustomers.map(cust => ({
+      header: `${cust} (箱数)`,
+      key: `cust_${cust}`,
+      width: Math.max(16, cust.length * 2 + 5)
+    }));
+
+    worksheet.columns = [...baseColumns, ...customerColumns];
 
     // 添加数据并设置样式
     results.forEach((row) => {
-      const excelRow = worksheet.addRow({
+      const rowData: Record<string, any> = {
         location: row['库位名称'],
         count: row['箱号数量'],
-        available: row['可入库数量']
+        available: row['可入库数量'],
+      };
+
+      // 填充每列客户对应的箱子数量，为 0 的则填 0，以方便用户做和值计算
+      uniqueCustomers.forEach((cust) => {
+        const dist = row['客户分布'] || {};
+        rowData[`cust_${cust}`] = dist[cust] || 0;
       });
+
+      const excelRow = worksheet.addRow(rowData);
 
       const count = row['箱号数量'];
       let color = 'FF0F172A'; // 默认：黑色 (Slate 900)
@@ -489,7 +529,7 @@ export default function App() {
       excelRow.getCell('location').alignment = { vertical: 'middle', horizontal: 'left' };
     });
 
-    //表头样式
+    // 表头样式
     const headerRow = worksheet.getRow(1);
     headerRow.height = 30;
     headerRow.eachCell((cell) => {
@@ -1214,19 +1254,34 @@ export default function App() {
                                 <td className="px-6 py-4">
                                   <div className="flex items-center gap-3">
                                     <div className={cn(
-                                      "w-2 h-2 rounded-full scale-50 group-hover:scale-100 transition-all",
+                                      "w-2 h-2 rounded-full scale-50 group-hover:scale-100 transition-all shrink-0",
                                       row['箱号数量'] > 18 ? "bg-red-500 shadow-[0_0_8px_rgba(239,68,68,0.5)]" : 
                                       row['箱号数量'] < 18 ? "bg-emerald-500 shadow-[0_0_8px_rgba(16,185,129,0.5)]" : 
                                       "bg-slate-900 shadow-[0_0_8px_rgba(15,23,42,0.3)]"
                                     )} />
-                                    <span className={cn(
-                                      "text-sm font-bold transition-colors",
-                                      row['箱号数量'] > 18 ? "text-red-600" : 
-                                      row['箱号数量'] < 18 ? "text-emerald-700" : 
-                                      "text-slate-900"
-                                    )}>
-                                      {row['库位名称']}
-                                    </span>
+                                    <div className="flex flex-col">
+                                      <span className={cn(
+                                        "text-sm font-bold transition-colors",
+                                        row['箱号数量'] > 18 ? "text-red-600" : 
+                                        row['箱号数量'] < 18 ? "text-emerald-700" :
+                                        "text-slate-900"
+                                      )}>
+                                        {row['库位名称']}
+                                      </span>
+                                      {row['客户分布'] && Object.keys(row['客户分布']).length > 0 && (
+                                        <span className="text-[10px] text-slate-400 mt-0.5" title={
+                                          Object.entries(row['客户分布'])
+                                            .map(([cust, count]) => `${cust} (${count}箱)`)
+                                            .join(', ')
+                                        }>
+                                          客户分布: {
+                                            Object.entries(row['客户分布'])
+                                              .map(([cust, count]) => `${cust} (${count}箱)`)
+                                              .join(', ')
+                                          }
+                                        </span>
+                                      )}
+                                    </div>
                                   </div>
                                 </td>
                                 <td className="px-6 py-4 text-center">
