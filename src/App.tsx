@@ -21,7 +21,9 @@ import {
   Package,
   History,
   BarChart3,
-  Loader2
+  Loader2,
+  ShieldAlert,
+  Save
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { jsPDF } from 'jspdf';
@@ -42,6 +44,8 @@ interface AnalysisResult {
   '箱号数量': number;
   '可入库数量': number;
   '客户分布'?: Record<string, number>;
+  '主存客户'?: string;
+  '主存功率'?: string;
 }
 
 interface MixedPowerAlert {
@@ -51,7 +55,7 @@ interface MixedPowerAlert {
 
 interface MixedCustomerAlert {
   location: string;
-  customerDetails: Record<string, string[]>; // CustomerName -> List of BoxNumbers
+  customerDetails: Record<string, { boxNo: string; power: string }[]>; // CustomerName -> List of BoxDetails
 }
 
 interface CustomerStat {
@@ -60,16 +64,43 @@ interface CustomerStat {
   locations: string[];
 }
 
+interface RelocationSuggestion {
+  boxNo: string;
+  currentLoc: string;
+  customerName: string;
+  powerGrade: string;
+  dominantCustomer: string;
+  dominantPower: string;
+  mismatchType: string;
+  recommendedLoc: string;
+  recommendationReason: string;
+}
+
 export default function App() {
   const STANDARD_CAPACITY = 18;
   const [data, setData] = useState<InventoryRow[]>([]);
   const [results, setResults] = useState<AnalysisResult[]>([]);
   const [mixedPowerAlerts, setMixedPowerAlerts] = useState<MixedPowerAlert[]>([]);
   const [mixedCustomerAlerts, setMixedCustomerAlerts] = useState<MixedCustomerAlert[]>([]);
-  const [orderCustomerMap, setOrderCustomerMap] = useState<Record<string, string>>({});
-  const [mappingFileName, setMappingFileName] = useState('');
+  const [relocationSuggestions, setRelocationSuggestions] = useState<RelocationSuggestion[]>([]);
+  const [orderCustomerMap, setOrderCustomerMap] = useState<Record<string, string>>(() => {
+    try {
+      const stored = localStorage.getItem('orderCustomerMap');
+      return stored ? JSON.parse(stored) : {};
+    } catch (e) {
+      console.error('Failed to parse stored orderCustomerMap', e);
+      return {};
+    }
+  });
+  const [mappingFileName, setMappingFileName] = useState(() => {
+    return localStorage.getItem('mappingFileName') || '';
+  });
   const [customerStats, setCustomerStats] = useState<CustomerStat[]>([]);
-  const [activeTab, setActiveTab] = useState<'location' | 'customer'>('location');
+  const [isSaved, setIsSaved] = useState<boolean>(() => {
+    return !!localStorage.getItem('mappingFileName');
+  });
+  const [saveSuccess, setSaveSuccess] = useState<string | null>(null);
+  const [activeTab, setActiveTab] = useState<'location' | 'customer' | 'correction'>('location');
   const [isProcessing, setIsProcessing] = useState(false);
   const [fileName, setFileName] = useState('');
   const [error, setError] = useState<string | null>(null);
@@ -233,6 +264,7 @@ export default function App() {
 
         setOrderCustomerMap(newMap);
         setMappingFileName(file.name);
+        setIsSaved(false);
         
         if (data.length > 0) {
           performAnalysis(data, newMap);
@@ -251,6 +283,10 @@ export default function App() {
     const locationPowerData: Record<string, Record<string, Set<string>>> = {};
     // 客户监测：库位 -> { 客户名称 -> [箱号] }
     const locationCustomerData: Record<string, Record<string, Set<string>>> = {};
+    // 箱号由功率的对照字典
+    const boxPowerMap: Record<string, string> = {};
+    
+    const activeBoxes: { boxNo: string; location: string; power: string; customerName: string }[] = [];
  
     // 1. 初始化固定的 C-H (1-60) 库位
     const zones = ['C', 'D', 'E', 'F', 'G', 'H'];
@@ -286,8 +322,16 @@ export default function App() {
  
       if (box !== undefined && box !== null && String(box).trim() !== '') {
         const boxStr = String(box);
+        boxPowerMap[boxStr] = power;
         locationMap[loc].add(boxStr);
  
+        activeBoxes.push({
+          boxNo: boxStr,
+          location: loc,
+          power: power,
+          customerName: custName
+        });
+
         // 记录库位下的功率分布
         if (!locationPowerData[loc][power]) {
           locationPowerData[loc][power] = new Set();
@@ -312,11 +356,36 @@ export default function App() {
           customersDist[cust] = boxes.size;
         }
       });
+
+      const powers = locationPowerData[location] || {};
+      // 主功率：箱数最多的功率挡
+      let dominantPower = '未知';
+      let maxPowerCount = 0;
+      Object.entries(powers).forEach(([p, boxes]) => {
+        if (boxes.size > maxPowerCount) {
+          maxPowerCount = boxes.size;
+          dominantPower = p;
+        }
+      });
+
+      // 主客户：箱数最多的客户名称
+      let dominantCustomer = '未映射客户';
+      let maxCustomerCount = 0;
+      Object.entries(customerMapForLoc).forEach(([c, boxes]) => {
+        if (boxes.size > maxCustomerCount) {
+          maxCustomerCount = boxes.size;
+          dominantCustomer = c;
+        }
+      });
+
+      const capacityForLoc = location.toUpperCase().startsWith('H') ? 14 : 18;
       return {
         '库位名称': location,
         '箱号数量': boxCount,
-        '可入库数量': STANDARD_CAPACITY - boxCount,
-        '客户分布': customersDist
+        '可入库数量': capacityForLoc - boxCount,
+        '客户分布': customersDist,
+        '主存客户': boxCount > 0 ? dominantCustomer : '空置',
+        '主存功率': boxCount > 0 ? dominantPower : '空置'
       };
     });
  
@@ -370,9 +439,12 @@ export default function App() {
     Object.entries(locationCustomerData).forEach(([loc, customers]) => {
       const customerNames = Object.keys(customers);
       if (customerNames.length > 1) {
-        const customerDetails: Record<string, string[]> = {};
+        const customerDetails: Record<string, { boxNo: string; power: string }[]> = {};
         customerNames.forEach(c => {
-          customerDetails[c] = Array.from(customers[c]);
+          customerDetails[c] = Array.from(customers[c]).map(boxNo => ({
+            boxNo,
+            power: boxPowerMap[boxNo] || '未知'
+          }));
         });
         customerAlerts.push({
           location: loc,
@@ -422,9 +494,199 @@ export default function App() {
       };
     }).sort((a, b) => b.boxCount - a.boxCount);
  
+    // 计算每个库位的主属性（主客户和主功率）与迁移修正建议
+    const getPerfectCapacity = (locName: string) => {
+      return locName.toUpperCase().startsWith('H') ? 14 : 18;
+    };
+
+    const locationDominantAttrs: Record<string, { dominantCustomer: string; dominantPower: string }> = {};
+
+    Object.keys(locationMap).forEach(loc => {
+      const powers = locationPowerData[loc] || {};
+      const customers = locationCustomerData[loc] || {};
+
+      // 主功率：箱数最多的功率挡
+      let dominantPower = '未知';
+      let maxPowerCount = 0;
+      Object.entries(powers).forEach(([p, boxes]) => {
+        if (boxes.size > maxPowerCount) {
+          maxPowerCount = boxes.size;
+          dominantPower = p;
+        }
+      });
+
+      // 主客户：箱数最多的客户名称
+      let dominantCustomer = '未映射客户';
+      let maxCustomerCount = 0;
+      Object.entries(customers).forEach(([c, boxes]) => {
+        if (boxes.size > maxCustomerCount) {
+          maxCustomerCount = boxes.size;
+          dominantCustomer = c;
+        }
+      });
+
+      locationDominantAttrs[loc] = {
+        dominantCustomer,
+        dominantPower
+      };
+    });
+
+    const suggestions: RelocationSuggestion[] = [];
+
+    // 对不一致的箱号进行筛查并进行迁移位置推荐
+    activeBoxes.forEach((bx) => {
+      // A库位属于待出货，经常变动，不参与纠偏与拼位计算
+      if (bx.location.toUpperCase().startsWith('A')) {
+        return;
+      }
+
+      const locAttrs = locationDominantAttrs[bx.location];
+      if (!locAttrs) return;
+
+      const custMatch = bx.customerName === locAttrs.dominantCustomer;
+      const powerMatch = bx.power === locAttrs.dominantPower;
+
+      // 如果客户不符，或者功率不符，且该库位存在多客户/多功率，则定义为需要迁移修正的箱子
+      if (!custMatch || !powerMatch) {
+        let mismatchType = '';
+        if (!custMatch && !powerMatch) {
+          mismatchType = '客户与功率不一致';
+        } else if (!custMatch) {
+          mismatchType = '客户不一致';
+        } else {
+          mismatchType = '功率不一致';
+        }
+
+        // 寻找推荐位置的逻辑
+        let recommendedLoc = '暂无匹配库位';
+        let recommendationReason = '未在系统内找到满足条件且有余位的配对库位';
+
+        // 1. 首要匹配：查找完全匹配目标客户和功率、且仍有剩余空位的库位
+        const perfectMatches = Object.entries(locationMap)
+          .map(([l, bSet]) => {
+            const cnt = bSet.size;
+            const cap = getPerfectCapacity(l);
+            const attrs = locationDominantAttrs[l];
+            return { l, cnt, cap, attrs };
+          })
+          .filter(item => {
+            return item.l !== bx.location &&
+                   !item.l.toUpperCase().startsWith('A') &&
+                   item.cnt < item.cap &&
+                   item.attrs.dominantCustomer === bx.customerName &&
+                   item.attrs.dominantPower === bx.power;
+          });
+
+        if (perfectMatches.length > 0) {
+          perfectMatches.sort((a, b) => (b.cap - b.cnt) - (a.cap - a.cnt));
+          const best = perfectMatches[0];
+          recommendedLoc = best.l;
+          recommendationReason = `推荐转移至【${best.l}】，该库位主存【${bx.customerName}】且功率为【${bx.power}】，现余 ${best.cap - best.cnt} 箱可用`;
+        } else {
+          // 2. 备选匹配：寻找完全空置全新库位
+          const emptyLocs = Object.entries(locationMap)
+            .map(([l, bSet]) => {
+              const cap = getPerfectCapacity(l);
+              return { l, cnt: bSet.size, cap };
+            })
+            .filter(item => item.l !== bx.location && !item.l.toUpperCase().startsWith('A') && item.cnt === 0);
+
+          if (emptyLocs.length > 0) {
+            emptyLocs.sort((a, b) => {
+              const getRank = (name: string) => {
+                const matchZone = name.match(/^([C-H])(\d+)$/i);
+                if (matchZone) return 1;
+                return 2;
+              };
+              const rA = getRank(a.l);
+              const rB = getRank(b.l);
+              if (rA !== rB) return rA - rB;
+              if (rA === 1) {
+                const mA = a.l.match(/^([C-H])(\d+)$/i)!;
+                const mB = b.l.match(/^([C-H])(\d+)$/i)!;
+                if (mA[1].toUpperCase() !== mB[1].toUpperCase()) {
+                  return mA[1].toUpperCase().localeCompare(mB[1].toUpperCase());
+                }
+                return parseInt(mA[2], 10) - parseInt(mB[2], 10);
+              }
+              return a.l.localeCompare(b.l);
+            });
+
+            const bestEmpty = emptyLocs[0];
+            recommendedLoc = bestEmpty.l;
+            recommendationReason = `推荐转移至空置库位【${bestEmpty.l}】，可充当其专属独立库位`;
+          } else {
+            // 3. 次级匹配：仅匹配该客户（客户优先且有空间）
+            const customerMatches = Object.entries(locationMap)
+              .map(([l, bSet]) => {
+                const cnt = bSet.size;
+                const cap = getPerfectCapacity(l);
+                const attrs = locationDominantAttrs[l];
+                return { l, cnt, cap, attrs };
+              })
+              .filter(item => {
+                return item.l !== bx.location &&
+                       !item.l.toUpperCase().startsWith('A') &&
+                       item.cnt < item.cap &&
+                       item.attrs.dominantCustomer === bx.customerName;
+              });
+
+            if (customerMatches.length > 0) {
+              customerMatches.sort((a, b) => (b.cap - b.cnt) - (a.cap - a.cnt));
+              const bestCust = customerMatches[0];
+              recommendedLoc = bestCust.l;
+              recommendationReason = `推荐转移至【${bestCust.l}】以匹配主客户【${bx.customerName}】空间，现余 ${bestCust.cap - bestCust.cnt} 箱可用`;
+            } else {
+              // 4. 三级匹配：仅匹配功率档
+              const powerMatches = Object.entries(locationMap)
+                .map(([l, bSet]) => {
+                  const cnt = bSet.size;
+                  const cap = getPerfectCapacity(l);
+                  const attrs = locationDominantAttrs[l];
+                  return { l, cnt, cap, attrs };
+                })
+                .filter(item => {
+                  return item.l !== bx.location &&
+                         !item.l.toUpperCase().startsWith('A') &&
+                         item.cnt < item.cap &&
+                         item.attrs.dominantPower === bx.power;
+                });
+
+              if (powerMatches.length > 0) {
+                powerMatches.sort((a, b) => (b.cap - b.cnt) - (a.cap - a.cnt));
+                const bestPower = powerMatches[0];
+                recommendedLoc = bestPower.l;
+                recommendationReason = `推荐转移至【${bestPower.l}】以配对功率档【${bx.power}】，现余 ${bestPower.cap - bestPower.cnt} 箱可用`;
+              }
+            }
+          }
+        }
+
+        suggestions.push({
+          boxNo: bx.boxNo,
+          currentLoc: bx.location,
+          customerName: bx.customerName,
+          powerGrade: bx.power,
+          dominantCustomer: locAttrs.dominantCustomer,
+          dominantPower: locAttrs.dominantPower,
+          mismatchType,
+          recommendedLoc,
+          recommendationReason
+        });
+      }
+    });
+
+    // 按照当前位置进行归类和排序，使相同库位集中放在一起
+    suggestions.sort((a, b) => {
+      const compLoc = a.currentLoc.localeCompare(b.currentLoc, undefined, { numeric: true, sensitivity: 'base' });
+      if (compLoc !== 0) return compLoc;
+      return a.boxNo.localeCompare(b.boxNo, undefined, { numeric: true, sensitivity: 'base' });
+    });
+
     setResults(analysisResults);
     setMixedPowerAlerts(alerts);
     setMixedCustomerAlerts(customerAlerts);
+    setRelocationSuggestions(suggestions);
     setCustomerStats(stats);
   };
 
@@ -454,8 +716,32 @@ export default function App() {
     setOrderCustomerMap({});
     setMappingFileName('');
     setCustomerStats([]);
+    setRelocationSuggestions([]);
+    setIsSaved(true);
+    try {
+      localStorage.removeItem('orderCustomerMap');
+      localStorage.removeItem('mappingFileName');
+    } catch (e) {
+      console.error('Failed to clear orderCustomerMap from localStorage', e);
+    }
     if (data.length > 0) {
       performAnalysis(data, {});
+    }
+  };
+
+  const persistMappingToLocalStorage = () => {
+    if (!mappingFileName || Object.keys(orderCustomerMap).length === 0) return;
+    try {
+      localStorage.setItem('orderCustomerMap', JSON.stringify(orderCustomerMap));
+      localStorage.setItem('mappingFileName', mappingFileName);
+      setIsSaved(true);
+      setSaveSuccess('工单客户对照关系保存成功！今次及今后加载新库存表，均会自动加载此映射关系。');
+      setTimeout(() => {
+        setSaveSuccess(null);
+      }, 5000);
+    } catch (e) {
+      console.error(e);
+      setError('本地保存失败，可能是对照表条数过多，超出了浏览器的 LocalStorage 容量限制（5MB）');
     }
   };
 
@@ -482,6 +768,7 @@ export default function App() {
     // 1. 定义基础列
     const baseColumns = [
       { header: '库位名称', key: 'location', width: 20 },
+      { header: '大部分存放的客户名称和功率', key: 'dominantAttr', width: 35 },
       { header: '箱号数量', key: 'count', width: 15 },
       { header: '可入库数量 (标准18)', key: 'available', width: 25 },
     ];
@@ -499,6 +786,7 @@ export default function App() {
     results.forEach((row) => {
       const rowData: Record<string, any> = {
         location: row['库位名称'],
+        dominantAttr: row['主存客户'] !== '空置' ? `${row['主存客户']} (${row['主存功率']})` : '空置',
         count: row['箱号数量'],
         available: row['可入库数量'],
       };
@@ -525,8 +813,9 @@ export default function App() {
         cell.font = { color: { argb: color }, bold: true };
         cell.alignment = { vertical: 'middle', horizontal: 'center' };
       });
-      // 库位名称左对齐
+      // 库位名称与大部分存放的属性左对齐
       excelRow.getCell('location').alignment = { vertical: 'middle', horizontal: 'left' };
+      excelRow.getCell('dominantAttr').alignment = { vertical: 'middle', horizontal: 'left' };
     });
 
     // 表头样式
@@ -606,10 +895,11 @@ export default function App() {
 
     mixedCustomerAlerts.forEach((alert) => {
       Object.entries(alert.customerDetails).forEach(([customer, boxes]) => {
+        const boxesTyped = boxes as { boxNo: string; power: string }[];
         const excelRow = worksheet.addRow({
           location: alert.location,
           customer: customer,
-          boxes: (boxes as string[]).join(', ')
+          boxes: boxesTyped.map(b => `${b.boxNo} (${b.power})`).join(', ')
         });
 
         excelRow.eachCell((cell) => {
@@ -671,6 +961,64 @@ export default function App() {
     const buffer = await workbook.xlsx.writeBuffer();
     const blob = new Blob([buffer], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
     saveAs(blob, `客户库存清单报告_${new Date().toISOString().split('T')[0]}.xlsx`);
+  };
+
+  const exportCorrectionToExcel = async () => {
+    if (relocationSuggestions.length === 0) return;
+
+    const workbook = new ExcelJS.Workbook();
+    const worksheet = workbook.addWorksheet('重组与偏差修正建议');
+
+    worksheet.columns = [
+      { header: '顺序', key: 'index', width: 10 },
+      { header: '不一致箱号', key: 'boxNo', width: 22 },
+      { header: '当前位置', key: 'currentLoc', width: 18 },
+      { header: '偏差类型', key: 'mismatchType', width: 18 },
+      { header: '当前客户', key: 'customerName', width: 25 },
+      { header: '当前功率档', key: 'powerGrade', width: 15 },
+      { header: '主存客户', key: 'dominantCustomer', width: 25 },
+      { header: '主存功率', key: 'dominantPower', width: 15 },
+      { header: '推荐迁移位置', key: 'recommendedLoc', width: 20 },
+      { header: '最优规整及推荐原因说明', key: 'recommendationReason', width: 68 }
+    ];
+
+    relocationSuggestions.forEach((s, i) => {
+      const excelRow = worksheet.addRow({
+        index: i + 1,
+        boxNo: s.boxNo,
+        currentLoc: s.currentLoc,
+        mismatchType: s.mismatchType,
+        customerName: s.customerName,
+        powerGrade: s.powerGrade,
+        dominantCustomer: s.dominantCustomer,
+        dominantPower: s.dominantPower,
+        recommendedLoc: s.recommendedLoc,
+        recommendationReason: s.recommendationReason
+      });
+
+      excelRow.eachCell((cell, colNumber) => {
+        if (colNumber === 4) {
+          cell.font = { color: { argb: 'FFEF4444' }, bold: true }; // Red text for warning
+        } else if (colNumber === 9) {
+          cell.font = { color: { argb: 'FF10B981' }, bold: true }; // Green text for suggestion
+        } else {
+          cell.font = { color: { argb: 'FF1E293B' } };
+        }
+        cell.alignment = { vertical: 'middle', horizontal: (colNumber === 1 || colNumber === 3 || colNumber === 9) ? 'center' : 'left' };
+      });
+    });
+
+    const headerRow = worksheet.getRow(1);
+    headerRow.height = 30;
+    headerRow.eachCell((cell) => {
+      cell.font = { bold: true, color: { argb: 'FFFFFFFF' } };
+      cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FF2563EB' } }; // Royal Blue header
+      cell.alignment = { vertical: 'middle', horizontal: 'center' };
+    });
+
+    const buffer = await workbook.xlsx.writeBuffer();
+    const blob = new Blob([buffer], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
+    saveAs(blob, `库位箱子重组纠偏建议报告_${new Date().toISOString().split('T')[0]}.xlsx`);
   };
 
   const generateLabelsPDF = (locationName: string) => {
@@ -744,8 +1092,7 @@ export default function App() {
     setResults([]);
     setMixedPowerAlerts([]);
     setMixedCustomerAlerts([]);
-    setOrderCustomerMap({});
-    setMappingFileName('');
+    setRelocationSuggestions([]);
     setCustomerStats([]);
     setFileName('');
     setError(null);
@@ -899,9 +1246,15 @@ export default function App() {
                     工单与客户对照表
                   </h4>
                   {mappingFileName && (
-                    <span className="px-2 py-0.5 bg-violet-50 text-violet-600 rounded-full text-[9px] font-bold border border-violet-100 animate-pulse">
-                      对照正常
-                    </span>
+                    isSaved ? (
+                      <span className="px-2 py-0.5 bg-emerald-50 text-emerald-600 rounded-full text-[9px] font-bold border border-emerald-100 flex items-center gap-1">
+                        <span className="w-1 h-1 rounded-full bg-emerald-500" /> 对照已保存
+                      </span>
+                    ) : (
+                      <span className="px-2 py-0.5 bg-amber-50 text-amber-600 rounded-full text-[9px] font-bold border border-amber-200 flex items-center gap-1 animate-pulse">
+                        <span className="w-1.5 h-1.5 rounded-full bg-amber-500 shrink-0" /> 临时加载 (未保存)
+                      </span>
+                    )
                   )}
                 </div>
 
@@ -926,7 +1279,7 @@ export default function App() {
                     <p className="text-[10px] text-slate-400 mt-1">建立库存销售单号/工单号与客户名称对应关系</p>
                   </motion.div>
                 ) : (
-                  <div className="bg-violet-950 rounded-2xl p-5 text-white shadow-md relative overflow-hidden">
+                  <div className="bg-violet-950 rounded-2xl p-5 text-white shadow-md relative overflow-hidden flex flex-col gap-4">
                     <div className="absolute -right-6 -bottom-6 w-20 h-20 bg-white/5 rounded-full" />
                     <div className="space-y-4">
                       <div>
@@ -943,6 +1296,29 @@ export default function App() {
                           <p className="text-lg font-bold font-mono tracking-tight text-violet-300">{customerStats.filter(c => c.customerName !== '未映射客户').length} 位</p>
                         </div>
                       </div>
+
+                      {!isSaved && (
+                        <div className="bg-amber-500/10 border border-amber-500/20 rounded-xl p-3 text-[10px] text-amber-200 leading-relaxed">
+                          <p className="font-bold flex items-center gap-1 text-amber-400 mb-0.5">
+                            <AlertCircle className="w-3.5 h-3.5" /> 提示：对照表尚未永久保存
+                          </p>
+                          当前只在内存中临时加载。
+                          为了以后再次打开时不需重复上传，
+                          <span className="text-white font-bold underline">请务必点击下方的保存按钮</span>将对照规则固化于您本机的浏览器存储中。
+                        </div>
+                      )}
+                    </div>
+
+                    <div className="flex flex-col gap-2 pt-2 border-t border-violet-900 z-10">
+                      {!isSaved && (
+                        <button 
+                          onClick={persistMappingToLocalStorage}
+                          className="w-full flex items-center justify-center gap-1.5 bg-amber-500 hover:bg-amber-600 text-slate-950 font-bold py-2.5 rounded-xl text-xs transition-colors shadow-lg shadow-amber-500/20 active:scale-95 animate-pulse"
+                        >
+                          <Save className="w-3.5 h-3.5" />
+                          💾 确认保存至本地（后续免上传）
+                        </button>
+                      )}
                       <div className="flex gap-2">
                         {customerStats.length > 0 && (
                           <button 
@@ -955,7 +1331,7 @@ export default function App() {
                         )}
                         <button 
                           onClick={clearMapping}
-                          className="px-3 bg-violet-900 hover:bg-violet-800 text-violet-300 hover:text-white rounded-xl text-xs transition-colors"
+                          className="px-4 py-2 bg-violet-900 hover:bg-violet-800 text-violet-300 hover:text-white rounded-xl text-xs font-bold transition-colors shadow-inner"
                           title="置空对应关系对照字典"
                         >
                           清除
@@ -1156,13 +1532,29 @@ export default function App() {
                                 <Package className="w-3 h-3 text-blue-400" />
                                 {alert.location}
                               </div>
-                              <div className="space-y-1">
-                                {Object.keys(alert.customerDetails).map(c => (
-                                  <div key={c} className="flex items-center justify-between text-slate-500">
-                                    <span className="truncate max-w-[100px]" title={c}>{c}</span>
-                                    <span className="font-mono text-blue-600 bg-blue-50 px-1.5 rounded">{alert.customerDetails[c].length}箱</span>
-                                  </div>
-                                ))}
+                              <div className="space-y-2 divide-y divide-blue-100/50">
+                                {Object.keys(alert.customerDetails).map(c => {
+                                  const boxes = alert.customerDetails[c];
+                                  const uniquePowers = Array.from(new Set(boxes.map(b => b.power))).join(', ');
+                                  return (
+                                    <div 
+                                      key={c} 
+                                      className="flex flex-col gap-1 pt-1.5 first:pt-0" 
+                                      title={boxes.map(b => `箱号: ${b.boxNo} (功率: ${b.power})`).join('\n')}
+                                    >
+                                      <div className="flex items-center justify-between text-slate-500">
+                                        <span className="truncate max-w-[130px] font-bold text-slate-700" title={c}>{c}</span>
+                                        <span className="font-mono text-blue-600 bg-blue-50 px-1.5 rounded shrink-0">{boxes.length}箱</span>
+                                      </div>
+                                      <div className="flex items-center gap-1.5 text-[9px] text-slate-400">
+                                        <span>包含功率:</span>
+                                        <span className="font-mono font-medium text-slate-500 bg-slate-50 px-1 rounded truncate max-w-[180px]" title={uniquePowers}>
+                                          {uniquePowers}
+                                        </span>
+                                      </div>
+                                    </div>
+                                  );
+                                })}
                               </div>
                             </div>
                           ))}
@@ -1181,7 +1573,9 @@ export default function App() {
                   <div>
                     <h3 className="font-bold text-xl text-slate-900 tracking-tight">分析明细看板</h3>
                     <p className="text-xs text-slate-400 font-medium">
-                      {activeTab === 'location' ? '统计并展示各库位上的箱号负载与余位数量' : '对照翻译显示各客户包含的总箱数及库位分布'}
+                      {activeTab === 'location' ? '统计并展示各库位上的箱号负载与余位数量（标准18箱，H库位首选14箱）' : 
+                       activeTab === 'customer' ? '对照翻译显示各客户包含的总箱数及库位分布' : 
+                       '依据库位主属性，推荐混合存放的箱子应转移调整的最佳目的库位'}
                     </p>
                   </div>
 
@@ -1208,13 +1602,23 @@ export default function App() {
                         <Package className="w-3.5 h-3.5" />
                         按客户
                       </button>
+                      <button 
+                        onClick={() => setActiveTab('correction')}
+                        className={cn(
+                          "px-4 py-1.5 text-xs font-bold rounded-lg transition-all flex items-center gap-1.5 whitespace-nowrap",
+                          activeTab === 'correction' ? "bg-white text-slate-950 shadow-sm" : "text-slate-550 hover:text-slate-900"
+                        )}
+                      >
+                        <ShieldAlert className="w-3.5 h-3.5 text-amber-500" />
+                        错误修正建议
+                      </button>
                     </div>
 
-                    {(activeTab === 'location' ? results.length > 0 : customerStats.length > 0) && (
+                    {(activeTab === 'location' ? results.length > 0 : activeTab === 'customer' ? customerStats.length > 0 : relocationSuggestions.length > 0) && (
                       <div className="flex items-center gap-3">
                         <div className="w-px h-8 bg-slate-100 hidden sm:block" />
                         <button 
-                          onClick={activeTab === 'location' ? exportToExcel : exportCustomerStatsToExcel}
+                          onClick={activeTab === 'location' ? exportToExcel : activeTab === 'customer' ? exportCustomerStatsToExcel : exportCorrectionToExcel}
                           className="p-2.5 bg-slate-50 hover:bg-slate-100 text-slate-605 rounded-xl border border-slate-200 transition-colors flex items-center gap-1.5 shrink-0 text-xs font-bold"
                           title="导出当前分表为 Excel"
                         >
@@ -1234,81 +1638,99 @@ export default function App() {
                           <tr className="text-left">
                             <th className="pl-8 pr-4 py-5 text-[10px] font-bold text-slate-400 uppercase tracking-[0.2em] w-16">顺序</th>
                             <th className="px-6 py-5 text-[10px] font-bold text-slate-400 uppercase tracking-[0.2em]">库位名称</th>
+                            <th className="px-6 py-5 text-[10px] font-bold text-slate-400 uppercase tracking-[0.2em]">大部分存放客户与功率</th>
                             <th className="px-6 py-5 text-[10px] font-bold text-slate-400 uppercase tracking-[0.2em] text-center">箱号数量</th>
-                            <th className="px-6 py-5 text-[10px] font-bold text-slate-400 uppercase tracking-[0.2em] text-right pr-12">可入库数量 (标准18)</th>
+                            <th className="px-6 py-5 text-[10px] font-bold text-slate-400 uppercase tracking-[0.2em] text-right pr-12">可入库数量</th>
                           </tr>
                         </thead>
                         <tbody className="divide-y divide-slate-50">
                           {results.length > 0 ? (
-                            results.map((row, i) => (
-                              <motion.tr 
-                                key={i}
-                                initial={{ opacity: 0, y: 10 }}
-                                animate={{ opacity: 1, y: 0 }}
-                                transition={{ delay: i * 0.015, duration: 0.3 }}
-                                className="hover:bg-slate-50/50 transition-all duration-200 group"
-                              >
-                                <td className="pl-8 pr-4 py-4 text-[10px] font-mono font-bold text-slate-300 group-hover:text-blue-400 transition-colors">
-                                  {String(i + 1).padStart(2, '0')}
-                                </td>
-                                <td className="px-6 py-4">
-                                  <div className="flex items-center gap-3">
-                                    <div className={cn(
-                                      "w-2 h-2 rounded-full scale-50 group-hover:scale-100 transition-all shrink-0",
-                                      row['箱号数量'] > 18 ? "bg-red-500 shadow-[0_0_8px_rgba(239,68,68,0.5)]" : 
-                                      row['箱号数量'] < 18 ? "bg-emerald-500 shadow-[0_0_8px_rgba(16,185,129,0.5)]" : 
-                                      "bg-slate-900 shadow-[0_0_8px_rgba(15,23,42,0.3)]"
-                                    )} />
-                                    <div className="flex flex-col">
-                                      <span className={cn(
-                                        "text-sm font-bold transition-colors",
-                                        row['箱号数量'] > 18 ? "text-red-600" : 
-                                        row['箱号数量'] < 18 ? "text-emerald-700" :
-                                        "text-slate-900"
-                                      )}>
-                                        {row['库位名称']}
-                                      </span>
-                                      {row['客户分布'] && Object.keys(row['客户分布']).length > 0 && (
-                                        <span className="text-[10px] text-slate-400 mt-0.5" title={
-                                          Object.entries(row['客户分布'])
-                                            .map(([cust, count]) => `${cust} (${count}箱)`)
-                                            .join(', ')
-                                        }>
-                                          客户分布: {
+                            results.map((row, i) => {
+                              const capacity = row['库位名称'].toUpperCase().startsWith('H') ? 14 : 18;
+                              return (
+                                <motion.tr 
+                                  key={i}
+                                  initial={{ opacity: 0, y: 10 }}
+                                  animate={{ opacity: 1, y: 0 }}
+                                  transition={{ delay: i * 0.015, duration: 0.3 }}
+                                  className="hover:bg-slate-50/50 transition-all duration-200 group"
+                                >
+                                  <td className="pl-8 pr-4 py-4 text-[10px] font-mono font-bold text-slate-300 group-hover:text-blue-400 transition-colors">
+                                    {String(i + 1).padStart(2, '0')}
+                                  </td>
+                                  <td className="px-6 py-4">
+                                    <div className="flex items-center gap-3">
+                                      <div className={cn(
+                                        "w-2 h-2 rounded-full scale-50 group-hover:scale-100 transition-all shrink-0",
+                                        row['箱号数量'] > capacity ? "bg-red-500 shadow-[0_0_8px_rgba(239,68,68,0.5)]" : 
+                                        row['箱号数量'] < capacity ? "bg-emerald-500 shadow-[0_0_8px_rgba(16,185,129,0.5)]" : 
+                                        "bg-slate-900 shadow-[0_0_8px_rgba(15,23,42,0.3)]"
+                                      )} />
+                                      <div className="flex flex-col">
+                                        <span className={cn(
+                                          "text-sm font-bold transition-colors",
+                                          row['箱号数量'] > capacity ? "text-red-600" : 
+                                          row['箱号数量'] < capacity ? "text-emerald-700" :
+                                          "text-slate-900"
+                                        )}>
+                                          {row['库位名称']}
+                                        </span>
+                                        {row['客户分布'] && Object.keys(row['客户分布']).length > 0 && (
+                                          <span className="text-[10px] text-slate-400 mt-0.5" title={
                                             Object.entries(row['客户分布'])
                                               .map(([cust, count]) => `${cust} (${count}箱)`)
                                               .join(', ')
-                                          }
-                                        </span>
-                                      )}
+                                          }>
+                                            客户分布: {
+                                              Object.entries(row['客户分布'])
+                                                .map(([cust, count]) => `${cust} (${count}箱)`)
+                                                .join(', ')
+                                            }
+                                          </span>
+                                        )}
+                                      </div>
                                     </div>
-                                  </div>
-                                </td>
-                                <td className="px-6 py-4 text-center">
-                                  <span className={cn(
-                                    "text-sm font-mono font-bold tabular-nums px-3 py-1 rounded-full",
-                                    row['箱号数量'] > 18 ? "bg-red-50 text-red-600" : 
-                                    row['箱号数量'] < 18 ? "bg-emerald-50 text-emerald-600" : 
-                                    "bg-slate-100 text-slate-900"
-                                  )}>
-                                    {row['箱号数量']}
-                                  </span>
-                                </td>
-                                <td className="px-6 py-4 text-right pr-12">
-                                  <span className={cn(
-                                    "text-sm font-mono font-bold tabular-nums transition-colors",
-                                    row['可入库数量'] < 0 ? "text-red-500" : 
-                                    row['可入库数量'] > 0 ? "text-emerald-500" : 
-                                    "text-slate-900"
-                                  )}>
-                                    {row['可入库数量'] > 0 ? `+${row['可入库数量']}` : row['可入库数量']}
-                                  </span>
-                                </td>
-                              </motion.tr>
-                            ))
+                                  </td>
+                                  <td className="px-6 py-4">
+                                    {row['主存客户'] !== '空置' ? (
+                                      <div className="flex flex-col gap-0.5">
+                                        <span className="text-xs font-bold text-slate-800 truncate max-w-[180px]" title={row['主存客户']}>
+                                          {row['主存客户']}
+                                        </span>
+                                        <span className="text-[10px] text-slate-400 font-mono">
+                                          功率: {row['主存功率']}
+                                        </span>
+                                      </div>
+                                    ) : (
+                                      <span className="text-xs text-slate-300 font-medium italic">空置</span>
+                                    )}
+                                  </td>
+                                  <td className="px-6 py-4 text-center">
+                                    <span className={cn(
+                                      "text-sm font-mono font-bold tabular-nums px-3 py-1 rounded-full",
+                                      row['箱号数量'] > capacity ? "bg-red-50 text-red-600" : 
+                                      row['箱号数量'] < capacity ? "bg-emerald-50 text-emerald-600" : 
+                                      "bg-slate-100 text-slate-900"
+                                    )}>
+                                      {row['箱号数量']} / {capacity}
+                                    </span>
+                                  </td>
+                                  <td className="px-6 py-4 text-right pr-12">
+                                    <span className={cn(
+                                      "text-sm font-mono font-bold tabular-nums transition-colors",
+                                      row['可入库数量'] < 0 ? "text-red-500" : 
+                                      row['可入库数量'] > 0 ? "text-emerald-500" : 
+                                      "text-slate-900"
+                                    )}>
+                                      {row['可入库数量'] > 0 ? `+${row['可入库数量']}` : row['可入库数量']}
+                                    </span>
+                                  </td>
+                                </motion.tr>
+                              );
+                            })
                           ) : (
                             <tr>
-                              <td colSpan={4} className="px-8 py-32 text-center">
+                              <td colSpan={5} className="px-8 py-32 text-center">
                                 <div className="flex flex-col items-center justify-center">
                                   <div className="w-16 h-16 bg-slate-50 rounded-full flex items-center justify-center mb-4 text-slate-200">
                                     <TableIcon className="w-8 h-8" />
@@ -1321,7 +1743,7 @@ export default function App() {
                           )}
                         </tbody>
                       </>
-                    ) : (
+                    ) : activeTab === 'customer' ? (
                       <>
                         <thead className="sticky top-0 bg-white/95 backdrop-blur-sm z-10 border-b border-slate-100 shadow-sm shadow-slate-100/50">
                           <tr className="text-left">
@@ -1355,7 +1777,7 @@ export default function App() {
                                   </span>
                                 </td>
                                 <td className="px-6 py-4 pr-12">
-                                  <div className="flex flex-wrap gap-1.5 max-h-24 overflow-y-auto pr-1">
+                                  <div className="flex flex-wrap gap-1.5 max-h-24 overflow-y-auto pr-1 text-nowrap">
                                     {row.locations.map(loc => (
                                       <span key={loc} className="px-2 py-0.5 bg-slate-100 text-slate-600 text-[10px] font-mono rounded font-bold border border-slate-200">
                                         {loc}
@@ -1369,12 +1791,91 @@ export default function App() {
                             <tr>
                               <td colSpan={4} className="px-8 py-32 text-center">
                                 <div className="flex flex-col items-center justify-center max-w-sm mx-auto">
-                                  <div className="w-16 h-16 bg-violet-55 text-violet-500 rounded-full flex items-center justify-center mb-4">
+                                  <div className="w-16 h-16 bg-violet-50 text-violet-500 rounded-full flex items-center justify-center mb-4">
                                     <Package className="w-8 h-8" />
                                   </div>
                                   <p className="text-sm font-bold text-slate-600">未发现客户关联统计数据</p>
                                   <p className="text-xs text-slate-400 mt-2 leading-relaxed">
                                     欲按“客户”维度归类分析箱数，请在左侧上传带有工单及客户信息的 <b>对照表</b>。系统支持在拖拽上传后实时计算并加载该明细视图。
+                                  </p>
+                                </div>
+                              </td>
+                            </tr>
+                          )}
+                        </tbody>
+                      </>
+                    ) : (
+                      <>
+                        <thead className="sticky top-0 bg-white/95 backdrop-blur-sm z-10 border-b border-slate-100 shadow-sm shadow-slate-100/50">
+                          <tr className="text-left text-slate-400 text-[10px] font-bold uppercase tracking-wider">
+                            <th className="pl-8 pr-4 py-5 w-16">顺序</th>
+                            <th className="px-6 py-5">不一致箱号</th>
+                            <th className="px-6 py-5 text-center">当前库位</th>
+                            <th className="px-6 py-5 text-left">该箱属性</th>
+                            <th className="px-6 py-5 text-left">库位主流 (以此为主)</th>
+                            <th className="px-6 py-5">不符类型</th>
+                            <th className="px-6 py-5 pr-12">推荐去向及原因</th>
+                          </tr>
+                        </thead>
+                        <tbody className="divide-y divide-slate-50 text-slate-700">
+                          {relocationSuggestions.length > 0 ? (
+                            relocationSuggestions.map((row, i) => (
+                              <motion.tr 
+                                key={i}
+                                initial={{ opacity: 0, y: 10 }}
+                                animate={{ opacity: 1, y: 0 }}
+                                transition={{ delay: i * 0.012, duration: 0.25 }}
+                                className="hover:bg-slate-50/50 transition-all duration-200 group text-xs"
+                              >
+                                <td className="pl-8 pr-4 py-4 font-mono font-bold text-slate-300 group-hover:text-amber-500 transition-colors">
+                                  {String(i + 1).padStart(2, '0')}
+                                </td>
+                                <td className="px-6 py-4 font-bold text-slate-800 font-mono">
+                                  {row.boxNo}
+                                </td>
+                                <td className="px-6 py-4 text-center font-bold text-slate-600 font-mono">
+                                  {row.currentLoc}
+                                </td>
+                                <td className="px-6 py-4 text-left">
+                                  <div className="flex flex-col space-y-0.5">
+                                    <span className="font-bold text-slate-800 truncate max-w-[130px] block" title={row.customerName}>{row.customerName}</span>
+                                    <span className="font-mono text-slate-450 text-[10px]">功率: {row.powerGrade}</span>
+                                  </div>
+                                </td>
+                                <td className="px-6 py-4 text-left">
+                                  <div className="flex flex-col space-y-0.5">
+                                    <span className="font-bold text-blue-700 truncate max-w-[130px] block" title={row.dominantCustomer}>{row.dominantCustomer}</span>
+                                    <span className="font-mono text-blue-500 text-[10px]">功率: {row.dominantPower}</span>
+                                  </div>
+                                </td>
+                                <td className="px-6 py-4">
+                                  <span className="inline-block px-2 py-0.5 font-bold text-[10px] rounded-md bg-amber-50 text-amber-700 border border-amber-200 text-nowrap">
+                                    {row.mismatchType}
+                                  </span>
+                                </td>
+                                <td className="px-6 py-4 pr-12">
+                                  <div className="flex flex-col gap-0.5">
+                                    <span className="font-bold text-emerald-600 font-mono flex items-center gap-1">
+                                      <ArrowRight className="w-3.5 h-3.5" />
+                                      {row.recommendedLoc}
+                                    </span>
+                                    <span className="text-[10px] text-slate-400 max-w-[280px]">
+                                      {row.recommendationReason}
+                                    </span>
+                                  </div>
+                                </td>
+                              </motion.tr>
+                            ))
+                          ) : (
+                            <tr>
+                              <td colSpan={7} className="px-8 py-32 text-center">
+                                <div className="flex flex-col items-center justify-center max-w-sm mx-auto">
+                                  <div className="w-12 h-12 bg-emerald-50 text-emerald-500 rounded-full flex items-center justify-center mb-4">
+                                    <CheckCircle2 className="w-6 h-6" />
+                                  </div>
+                                  <p className="text-sm font-bold text-slate-800">未检测到需要调整的混放箱</p>
+                                  <p className="text-xs text-slate-400 mt-2 leading-relaxed">
+                                    当前已有货存的所有库位均达到完美的一致性（单客户 + 单功率），不含任何非凡主属性的小部分异类箱子，无需修正调整！
                                   </p>
                                 </div>
                               </td>
@@ -1389,7 +1890,7 @@ export default function App() {
                 <div className="p-6 bg-slate-50/50 border-t border-slate-100 flex items-center justify-between">
                   <div className="flex items-center gap-1.5 opacity-60">
                     <CheckCircle2 className="w-3.5 h-3.5 text-emerald-500" />
-                    <span className="text-[10px] font-bold text-slate-500 uppercase tracking-widest">分析引擎 v4.0</span>
+                    <span className="text-[10px] font-bold text-slate-500 uppercase tracking-widest">分析引擎 v5.0</span>
                   </div>
                   <p className="text-[10px] text-slate-400 font-medium">
                     生成于 {new Date().toLocaleTimeString()} • 本地沙盒环境处理
@@ -1418,6 +1919,29 @@ export default function App() {
               <p className="text-sm font-bold">{error}</p>
             </div>
             <button onClick={() => setError(null)} className="ml-4 p-2 hover:bg-white/10 rounded-lg transition-colors text-slate-400">
+              <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12" /></svg>
+            </button>
+          </motion.div>
+        )}
+      </AnimatePresence>
+
+      {/* Success Toast */}
+      <AnimatePresence>
+        {saveSuccess && (
+          <motion.div 
+            initial={{ opacity: 0, y: 30 }}
+            animate={{ opacity: 1, y: 0 }}
+            exit={{ opacity: 0, scale: 0.95 }}
+            className="fixed bottom-10 right-10 bg-slate-900 text-white px-8 py-5 rounded-2xl shadow-[0_20px_50px_rgba(0,0,0,0.3)] flex items-center gap-4 z-50 border border-white/10 backdrop-blur-xl"
+          >
+            <div className="w-10 h-10 bg-emerald-500 rounded-full flex items-center justify-center shrink-0 shadow-lg shadow-emerald-500/20">
+              <CheckCircle2 className="w-5 h-5 text-white" />
+            </div>
+            <div>
+              <p className="text-[10px] font-bold text-emerald-400 uppercase tracking-widest mb-0.5">保存成功</p>
+              <p className="text-sm font-bold">{saveSuccess}</p>
+            </div>
+            <button onClick={() => setSaveSuccess(null)} className="ml-4 p-2 hover:bg-white/10 rounded-lg transition-colors text-slate-400">
               <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12" /></svg>
             </button>
           </motion.div>
