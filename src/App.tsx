@@ -48,9 +48,15 @@ interface MixedPowerAlert {
   powerDetails: Record<string, string[]>; 
 }
 
-interface MixedOrderAlert {
+interface MixedCustomerAlert {
   location: string;
-  orderDetails: Record<string, string[]>; // OrderNo -> List of BoxNumbers
+  customerDetails: Record<string, string[]>; // CustomerName -> List of BoxNumbers
+}
+
+interface CustomerStat {
+  customerName: string;
+  boxCount: number;
+  locations: string[];
 }
 
 export default function App() {
@@ -58,7 +64,11 @@ export default function App() {
   const [data, setData] = useState<InventoryRow[]>([]);
   const [results, setResults] = useState<AnalysisResult[]>([]);
   const [mixedPowerAlerts, setMixedPowerAlerts] = useState<MixedPowerAlert[]>([]);
-  const [mixedOrderAlerts, setMixedOrderAlerts] = useState<MixedOrderAlert[]>([]);
+  const [mixedCustomerAlerts, setMixedCustomerAlerts] = useState<MixedCustomerAlert[]>([]);
+  const [orderCustomerMap, setOrderCustomerMap] = useState<Record<string, string>>({});
+  const [mappingFileName, setMappingFileName] = useState('');
+  const [customerStats, setCustomerStats] = useState<CustomerStat[]>([]);
+  const [activeTab, setActiveTab] = useState<'location' | 'customer'>('location');
   const [isProcessing, setIsProcessing] = useState(false);
   const [fileName, setFileName] = useState('');
   const [error, setError] = useState<string | null>(null);
@@ -75,23 +85,73 @@ export default function App() {
         const workbook = XLSX.read(bstr, { type: 'binary' });
         const sheetName = workbook.SheetNames[0];
         const worksheet = workbook.Sheets[sheetName];
-        const rawData = XLSX.utils.sheet_to_json(worksheet) as any[];
+        
+        // 采用兼具精确索引和模糊匹配的高鲁棒性解析方式
+        const arrayRows = XLSX.utils.sheet_to_json(worksheet, { header: 1 }) as any[][];
 
-        if (!rawData || rawData.length === 0) {
-          throw new Error('表格中没有数据');
+        if (!arrayRows || arrayRows.length < 2) {
+          throw new Error('表格中没有足够的数据行');
         }
 
-        // Validate columns
-        const requiredColumns = ['箱号', '库位名称'];
-        const firstRow = rawData[0];
-        const missing = requiredColumns.filter(col => !(col in firstRow));
-
-        if (missing.length > 0) {
-          throw new Error(`缺少必要列: ${missing.join(', ')}`);
+        const headers = (arrayRows[0] || []).map(h => String(h || '').trim());
+        
+        // 查找 [箱号] 和 [库位名称]
+        let boxIdx = headers.findIndex(h => h === '箱号');
+        let locIdx = headers.findIndex(h => h === '库位名称');
+        
+        // 常用标题模糊检测以增强容错
+        if (boxIdx === -1) boxIdx = headers.findIndex(h => h.includes('箱号') || h.includes('箱码'));
+        if (boxIdx === -1) boxIdx = headers.findIndex(h => h === '箱');
+        if (locIdx === -1) locIdx = headers.findIndex(h => h.includes('库位') || h.includes('仓位'));
+        
+        if (boxIdx === -1) {
+          throw new Error('未在主库存表格首行中找到 [箱号] 列');
+        }
+        if (locIdx === -1) {
+          throw new Error('未在主库存表格首行中找到 [库位名称] 列');
         }
 
-        setData(rawData);
-        performAnalysis(rawData);
+        // 工单号标题的模糊位置 (作为 column J 越界或为空时的 fallback)
+        let orderNoFallbackIdx = headers.findIndex(h => h.includes('工单') || h.includes('销售单') || h.toLowerCase().includes('order'));
+
+        const parsedData: InventoryRow[] = [];
+        for (let i = 1; i < arrayRows.length; i++) {
+          const rowArr = arrayRows[i];
+          if (!rowArr || rowArr.length === 0) continue;
+          
+          // 排除全是空单元格的虚假行
+          const isAllEmpty = rowArr.every(val => val === undefined || val === null || String(val).trim() === '');
+          if (isAllEmpty) continue;
+          
+          const boxVal = rowArr[boxIdx] !== undefined && rowArr[boxIdx] !== null ? String(rowArr[boxIdx]).trim() : '';
+          const locVal = rowArr[locIdx] !== undefined && rowArr[locIdx] !== null ? String(rowArr[locIdx]).trim() : '';
+          
+          // 按用户要求：主库存表中每一箱的工单号在 J 列（Column J 是第 10 列，0-based 索引为 9）
+          let orderNoVal = '';
+          if (rowArr.length > 9 && rowArr[9] !== undefined && rowArr[9] !== null && String(rowArr[9]).trim() !== '') {
+            orderNoVal = String(rowArr[9]).trim();
+          } else if (orderNoFallbackIdx !== -1 && rowArr[orderNoFallbackIdx] !== undefined && rowArr[orderNoFallbackIdx] !== null) {
+            orderNoVal = String(rowArr[orderNoFallbackIdx]).trim();
+          }
+
+          let powerIdx = headers.findIndex(h => h.includes('功率'));
+          const powerVal = powerIdx !== -1 ? rowArr[powerIdx] : undefined;
+
+          parsedData.push({
+            '箱号': boxVal,
+            '库位名称': locVal,
+            '功率档': powerVal,
+            '工单号': orderNoVal,
+            '销售单号': orderNoVal
+          });
+        }
+
+        if (parsedData.length === 0) {
+          throw new Error('主库存表中没有成功加载有效数据行');
+        }
+
+        setData(parsedData);
+        performAnalysis(parsedData, orderCustomerMap);
       } catch (err) {
         setError(err instanceof Error ? err.message : '文件解析失败，请检查格式是否正确');
         console.error(err);
@@ -106,13 +166,91 @@ export default function App() {
     reader.readAsBinaryString(file);
   };
 
-  const performAnalysis = (rows: InventoryRow[]) => {
+  const processMappingFile = (file: File) => {
+    setError(null);
+    const reader = new FileReader();
+    reader.onload = (e) => {
+      try {
+        const bstr = e.target?.result;
+        const workbook = XLSX.read(bstr, { type: 'binary' });
+        const sheetName = workbook.SheetNames[0];
+        const worksheet = workbook.Sheets[sheetName];
+        
+        // 规则：“对照表，工单号B列（索引1），对应的F列（索引5），是客户简称”
+        const arrayRows = XLSX.utils.sheet_to_json(worksheet, { header: 1 }) as any[][];
+        if (!arrayRows || arrayRows.length === 0) {
+          throw new Error('对照表为空或格式不正确');
+        }
+
+        // 读取首行做模糊寻址 fallback（如果个别单元格由于某些缘故未对齐B/F）
+        const firstRow = arrayRows[0] || [];
+        const headers = firstRow.map(h => String(h || '').trim());
+        
+        let orderFallbackIndex = headers.findIndex(h => h.includes('工单') || h.includes('销售单') || h.toLowerCase().includes('order'));
+        let customerFallbackIndex = headers.findIndex(h => h.includes('客户') || h.toLowerCase().includes('customer') || h.toLowerCase().includes('client') || h.includes('简称'));
+
+        // 如果首行包含了标志性文字词组，认为它是一行表头，跳过不当作实际数据映射
+        let startRowIndex = 0;
+        const bCellVal = String(firstRow[1] || '').trim();
+        const fCellVal = String(firstRow[5] || '').trim();
+        if (bCellVal.includes('单号') || bCellVal.includes('工单') || fCellVal.includes('客户') || fCellVal.includes('简称')) {
+          startRowIndex = 1;
+        }
+
+        const newMap: Record<string, string> = {};
+        for (let i = startRowIndex; i < arrayRows.length; i++) {
+          const rowArr = arrayRows[i];
+          if (!rowArr || rowArr.length === 0) continue;
+
+          // 用户强规则对应：Column B (index 1) 和 Column F (index 5)
+          let orderVal = '';
+          let custVal = '';
+
+          if (rowArr.length > 1 && rowArr[1] !== undefined && rowArr[1] !== null) {
+            orderVal = String(rowArr[1]).trim();
+          }
+          if (rowArr.length > 5 && rowArr[5] !== undefined && rowArr[5] !== null) {
+            custVal = String(rowArr[5]).trim();
+          }
+
+          // 模糊兜底 (如果B和F提取为空且首行探测到了匹配的列字段)
+          if (!orderVal && orderFallbackIndex !== -1 && rowArr[orderFallbackIndex] !== undefined && rowArr[orderFallbackIndex] !== null) {
+            orderVal = String(rowArr[orderFallbackIndex]).trim();
+          }
+          if (!custVal && customerFallbackIndex !== -1 && rowArr[customerFallbackIndex] !== undefined && rowArr[customerFallbackIndex] !== null) {
+            custVal = String(rowArr[customerFallbackIndex]).trim();
+          }
+
+          if (orderVal && custVal) {
+            newMap[orderVal] = custVal;
+          }
+        }
+
+        if (Object.keys(newMap).length === 0) {
+          throw new Error('未能在对照表中找到可转换的工单与客户对照数据');
+        }
+
+        setOrderCustomerMap(newMap);
+        setMappingFileName(file.name);
+        
+        if (data.length > 0) {
+          performAnalysis(data, newMap);
+        }
+      } catch (err) {
+        setError(err instanceof Error ? err.message : '对照表文件解析失败');
+        console.error(err);
+      }
+    };
+    reader.readAsBinaryString(file);
+  };
+
+  const performAnalysis = (rows: InventoryRow[], currentMap: Record<string, string> = orderCustomerMap) => {
     const locationMap: Record<string, Set<string | number>> = {};
     // 功率检测：库位 -> { 功率档 -> [箱号] }
     const locationPowerData: Record<string, Record<string, Set<string>>> = {};
-    // 工单监测：库位 -> { 工单号 -> [箱号] }
-    const locationOrderData: Record<string, Record<string, Set<string>>> = {};
-
+    // 客户监测：库位 -> { 客户名称 -> [箱号] }
+    const locationCustomerData: Record<string, Record<string, Set<string>>> = {};
+ 
     // 1. 初始化固定的 C-H (1-60) 库位
     const zones = ['C', 'D', 'E', 'F', 'G', 'H'];
     zones.forEach(zone => {
@@ -120,10 +258,10 @@ export default function App() {
         const locName = `${zone}${String(i).padStart(2, '0')}`;
         locationMap[locName] = new Set();
         locationPowerData[locName] = {};
-        locationOrderData[locName] = {};
+        locationCustomerData[locName] = {};
       }
     });
-
+ 
     // 2. 处理数据
     rows.forEach(row => {
       let loc = String(row['库位名称'] || '').trim();
@@ -133,35 +271,36 @@ export default function App() {
       if (match) {
         loc = `${match[1].toUpperCase()}${String(match[2]).padStart(2, '0')}`;
       }
-
+ 
       const box = row['箱号'];
       const power = String(row['功率档'] || '未知').trim();
       const orderNo = String(row['工单号'] || row['销售单号'] || '空单号').trim();
+      const custName = currentMap[orderNo] || '未映射客户';
       
       if (!locationMap[loc]) {
         locationMap[loc] = new Set();
         locationPowerData[loc] = {};
-        locationOrderData[loc] = {};
+        locationCustomerData[loc] = {};
       }
-
+ 
       if (box !== undefined && box !== null && String(box).trim() !== '') {
         const boxStr = String(box);
         locationMap[loc].add(boxStr);
-
+ 
         // 记录库位下的功率分布
         if (!locationPowerData[loc][power]) {
           locationPowerData[loc][power] = new Set();
         }
         locationPowerData[loc][power].add(boxStr);
-
-        // 记录库位下的工单分布
-        if (!locationOrderData[loc][orderNo]) {
-          locationOrderData[loc][orderNo] = new Set();
+ 
+        // 记录库位下的客户分布
+        if (!locationCustomerData[loc][custName]) {
+          locationCustomerData[loc][custName] = new Set();
         }
-        locationOrderData[loc][orderNo].add(boxStr);
+        locationCustomerData[loc][custName].add(boxStr);
       }
     });
-
+ 
     // 汇总分析结果
     const analysisResults: AnalysisResult[] = Object.entries(locationMap).map(([location, boxSet]) => {
       const boxCount = boxSet.size;
@@ -171,24 +310,24 @@ export default function App() {
         '可入库数量': STANDARD_CAPACITY - boxCount
       };
     });
-
+ 
     // 排序逻辑保持不变...
     analysisResults.sort((a, b) => {
       const nameA = a['库位名称'];
       const nameB = b['库位名称'];
-
+ 
       const getRank = (name: string) => {
         const matchZone = name.match(/^([C-H])(\d+)$/i);
         if (matchZone) return 1;
         if (name.toLowerCase().startsWith('wall')) return 2;
         return 3;
       };
-
+ 
       const rankA = getRank(nameA);
       const rankB = getRank(nameB);
-
+ 
       if (rankA !== rankB) return rankA - rankB;
-
+ 
       if (rankA === 1) {
         const matchA = nameA.match(/^([C-H])(\d+)$/i)!;
         const matchB = nameB.match(/^([C-H])(\d+)$/i)!;
@@ -197,10 +336,10 @@ export default function App() {
         }
         return parseInt(matchA[2], 10) - parseInt(matchB[2], 10);
       }
-
+ 
       return nameA.localeCompare(nameB);
     });
-
+ 
     // 处理混档警告 (库位内功率档种类 > 1)
     const alerts: MixedPowerAlert[] = [];
     Object.entries(locationPowerData).forEach(([loc, powers]) => {
@@ -216,26 +355,68 @@ export default function App() {
         });
       }
     });
-
-    // 处理工单混载警告
-    const orderAlerts: MixedOrderAlert[] = [];
-    Object.entries(locationOrderData).forEach(([loc, orders]) => {
-      const orderNos = Object.keys(orders);
-      if (orderNos.length > 1) {
-        const orderDetails: Record<string, string[]> = {};
-        orderNos.forEach(o => {
-          orderDetails[o] = Array.from(orders[o]);
+ 
+    // 处理客户混载警告
+    const customerAlerts: MixedCustomerAlert[] = [];
+    Object.entries(locationCustomerData).forEach(([loc, customers]) => {
+      const customerNames = Object.keys(customers);
+      if (customerNames.length > 1) {
+        const customerDetails: Record<string, string[]> = {};
+        customerNames.forEach(c => {
+          customerDetails[c] = Array.from(customers[c]);
         });
-        orderAlerts.push({
+        customerAlerts.push({
           location: loc,
-          orderDetails
+          customerDetails
         });
       }
     });
-
+ 
+    // 客户箱数统计
+    const customerBoxes: Record<string, Set<string>> = {};
+    const customerLocs: Record<string, Set<string>> = {};
+ 
+    rows.forEach(row => {
+      const box = row['箱号'];
+      if (box !== undefined && box !== null && String(box).trim() !== '') {
+        const boxStr = String(box);
+        const orderNo = String(row['工单号'] || row['销售单号'] || '空单号').trim();
+        const custName = currentMap[orderNo] || '未映射客户';
+ 
+        let loc = String(row['库位名称'] || '').trim();
+        if (loc) {
+          const match = loc.match(/^([C-H])(\d+)$/i);
+          if (match) {
+            loc = `${match[1].toUpperCase()}${String(match[2]).padStart(2, '0')}`;
+          }
+        }
+ 
+        if (!customerBoxes[custName]) {
+          customerBoxes[custName] = new Set();
+        }
+        customerBoxes[custName].add(boxStr);
+ 
+        if (loc) {
+          if (!customerLocs[custName]) {
+            customerLocs[custName] = new Set();
+          }
+          customerLocs[custName].add(loc);
+        }
+      }
+    });
+ 
+    const stats: CustomerStat[] = Object.entries(customerBoxes).map(([custName, boxSet]) => {
+      return {
+        customerName: custName,
+        boxCount: boxSet.size,
+        locations: Array.from(customerLocs[custName] || [])
+      };
+    }).sort((a, b) => b.boxCount - a.boxCount);
+ 
     setResults(analysisResults);
     setMixedPowerAlerts(alerts);
-    setMixedOrderAlerts(orderAlerts);
+    setMixedCustomerAlerts(customerAlerts);
+    setCustomerStats(stats);
   };
 
   const handleFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -247,6 +428,26 @@ export default function App() {
     e.preventDefault();
     const file = e.dataTransfer.files?.[0];
     if (file) processFile(file);
+  };
+
+  const handleMappingFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (file) processMappingFile(file);
+  };
+
+  const handleMappingDrop = (e: React.DragEvent) => {
+    e.preventDefault();
+    const file = e.dataTransfer.files?.[0];
+    if (file) processMappingFile(file);
+  };
+
+  const clearMapping = () => {
+    setOrderCustomerMap({});
+    setMappingFileName('');
+    setCustomerStats([]);
+    if (data.length > 0) {
+      performAnalysis(data, {});
+    }
   };
 
   const exportToExcel = async () => {
@@ -324,7 +525,7 @@ export default function App() {
         const excelRow = worksheet.addRow({
           location: alert.location,
           power: power,
-          boxes: boxes.join(', ')
+          boxes: (boxes as string[]).join(', ')
         });
 
         // 样式设置
@@ -351,24 +552,24 @@ export default function App() {
     saveAs(blob, `库存混档异常报告_${new Date().toISOString().split('T')[0]}.xlsx`);
   };
 
-  const exportOrdersToExcel = async () => {
-    if (mixedOrderAlerts.length === 0) return;
+  const exportCustomerAlertsToExcel = async () => {
+    if (mixedCustomerAlerts.length === 0) return;
 
     const workbook = new ExcelJS.Workbook();
-    const worksheet = workbook.addWorksheet('工单混载明细');
+    const worksheet = workbook.addWorksheet('客户混载明细');
 
     worksheet.columns = [
       { header: '库位名称', key: 'location', width: 20 },
-      { header: '工单号', key: 'order', width: 25 },
+      { header: '客户名称', key: 'customer', width: 30 },
       { header: '包含箱号', key: 'boxes', width: 80 }
     ];
 
-    mixedOrderAlerts.forEach((alert) => {
-      Object.entries(alert.orderDetails).forEach(([order, boxes]) => {
+    mixedCustomerAlerts.forEach((alert) => {
+      Object.entries(alert.customerDetails).forEach(([customer, boxes]) => {
         const excelRow = worksheet.addRow({
           location: alert.location,
-          order: order,
-          boxes: boxes.join(', ')
+          customer: customer,
+          boxes: (boxes as string[]).join(', ')
         });
 
         excelRow.eachCell((cell) => {
@@ -389,7 +590,47 @@ export default function App() {
 
     const buffer = await workbook.xlsx.writeBuffer();
     const blob = new Blob([buffer], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
-    saveAs(blob, `工单混载预警报告_${new Date().toISOString().split('T')[0]}.xlsx`);
+    saveAs(blob, `客户混载预警报告_${new Date().toISOString().split('T')[0]}.xlsx`);
+  };
+
+  const exportCustomerStatsToExcel = async () => {
+    if (customerStats.length === 0) return;
+
+    const workbook = new ExcelJS.Workbook();
+    const worksheet = workbook.addWorksheet('客户库存数量统计');
+
+    worksheet.columns = [
+      { header: '顺序', key: 'index', width: 12 },
+      { header: '客户名称', key: 'customerName', width: 45 },
+      { header: '占箱数量 (箱)', key: 'boxCount', width: 25 }
+    ];
+
+    customerStats.forEach((stat, i) => {
+      const excelRow = worksheet.addRow({
+        index: i + 1,
+        customerName: stat.customerName,
+        boxCount: stat.boxCount
+      });
+
+      excelRow.eachCell((cell) => {
+        cell.font = { color: { argb: 'FF5B21B6' } }; // 紫色
+        cell.alignment = { vertical: 'middle', horizontal: 'left' };
+      });
+      excelRow.getCell('index').alignment = { vertical: 'middle', horizontal: 'center' };
+      excelRow.getCell('boxCount').alignment = { vertical: 'middle', horizontal: 'right' };
+    });
+
+    const headerRow = worksheet.getRow(1);
+    headerRow.height = 30;
+    headerRow.eachCell((cell) => {
+      cell.font = { bold: true, color: { argb: 'FFFFFFFF' } };
+      cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FF7C3AED' } }; // 优雅紫
+      cell.alignment = { vertical: 'middle', horizontal: 'center' };
+    });
+
+    const buffer = await workbook.xlsx.writeBuffer();
+    const blob = new Blob([buffer], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
+    saveAs(blob, `客户库存清单报告_${new Date().toISOString().split('T')[0]}.xlsx`);
   };
 
   const generateLabelsPDF = (locationName: string) => {
@@ -462,7 +703,10 @@ export default function App() {
     setData([]);
     setResults([]);
     setMixedPowerAlerts([]);
-    setMixedOrderAlerts([]);
+    setMixedCustomerAlerts([]);
+    setOrderCustomerMap({});
+    setMappingFileName('');
+    setCustomerStats([]);
     setFileName('');
     setError(null);
   };
@@ -489,22 +733,8 @@ export default function App() {
           >
             {!data.length && <span className="absolute left-0 top-0 bottom-0 w-1 bg-white animate-pulse" />}
             <Upload className="w-4 h-4" />
-            Excel 上传
+            重置分析沙盒
           </button>
-          
-          <div className={cn(
-            "w-full flex items-center gap-3 px-6 py-3 text-sm font-medium transition-colors",
-            data.length ? "text-blue-400 font-bold" : "text-slate-700 opacity-50 cursor-not-allowed"
-          )}>
-            <TableIcon className="w-4 h-4" />
-            统计结果分析
-          </div>
-          
-          <div className="px-6 py-2 text-[10px] font-bold text-slate-500 uppercase tracking-widest mt-6 mb-2 opacity-50">工具</div>
-          <div className="flex items-center gap-3 px-6 py-3 text-sm font-medium text-slate-500">
-            <Hash className="w-4 h-4" />
-            批量处理
-          </div>
         </nav>
 
         <div className="p-6 border-t border-slate-800 text-[10px] text-slate-500 uppercase font-bold tracking-widest">
@@ -518,7 +748,7 @@ export default function App() {
         <header className="h-16 bg-white border-b border-slate-200 flex items-center justify-between px-8 shrink-0">
           <div className="flex items-center gap-2">
             <h2 className="text-lg font-bold text-slate-800">库存数据统计分析</h2>
-            <span className="px-2 py-0.5 bg-slate-100 text-[10px] text-slate-400 rounded-full font-bold uppercase tracking-wider">v1.2.0</span>
+            <span className="px-2 py-0.5 bg-slate-100 text-[10px] text-slate-400 rounded-full font-bold uppercase tracking-wider">v1.2.1</span>
           </div>
           
           <div className="flex items-center gap-6">
@@ -540,105 +770,185 @@ export default function App() {
             
             {/* Left Control Column */}
             <div className="col-span-12 xl:col-span-4 flex flex-col gap-6">
-              {!data.length ? (
-                <motion.div 
-                  initial={{ opacity: 0, y: 10 }}
-                  animate={{ opacity: 1, y: 0 }}
-                  onDragOver={(e) => e.preventDefault()}
-                  onDrop={handleDrop}
-                  className="bg-white p-12 rounded-3xl border-2 border-dashed border-slate-200 flex flex-col items-center justify-center text-center relative group hover:border-blue-500 hover:bg-blue-50/10 transition-all duration-300 shadow-sm"
-                >
-                  <input 
-                    type="file" 
-                    accept=".xlsx,.xls" 
-                    onChange={handleFileUpload}
-                    className="absolute inset-0 opacity-0 cursor-pointer z-10"
-                  />
-                  <div className="w-20 h-20 bg-blue-50 rounded-3xl flex items-center justify-center mb-6 text-blue-600 group-hover:scale-110 group-hover:rotate-3 transition-transform duration-500">
-                    <Upload className="w-10 h-10" />
-                  </div>
-                  <h3 className="font-bold text-xl mb-2 text-slate-900 group-hover:text-blue-600 transition-colors">拖拽库存文件到此处</h3>
-                  <p className="text-sm text-slate-400 mb-8 max-w-[200px]">支持 Excel 格式 (.xlsx, .xls)</p>
-                  <div className="px-6 py-3 bg-slate-900 text-white rounded-xl text-sm font-bold shadow-xl shadow-slate-200 transition-transform active:scale-95 group-hover:bg-blue-600">
-                    选择本地文件
-                  </div>
-                  
-                  {isProcessing && (
-                    <div className="absolute inset-0 bg-white/95 backdrop-blur-sm rounded-3xl flex flex-col items-center justify-center z-20">
-                      <Loader2 className="w-10 h-10 text-blue-600 animate-spin mb-4" />
-                      <p className="text-sm font-bold text-slate-800 tracking-widest uppercase">正在解析...</p>
-                    </div>
+              
+              {/* Card 1: Main Inventory Data Upload */}
+              <div className="bg-white p-6 rounded-3xl border border-slate-200 shadow-sm flex flex-col gap-4">
+                <div className="flex items-center justify-between pb-3 border-b border-slate-100">
+                  <h4 className="text-xs font-bold uppercase tracking-wider text-slate-500 flex items-center gap-2">
+                    <span className="w-5 h-5 rounded-full bg-blue-100 text-blue-600 flex items-center justify-center font-bold text-[10px]">1</span>
+                    主库存数据源
+                  </h4>
+                  {data.length > 0 && (
+                    <span className="px-2 py-0.5 bg-emerald-50 text-emerald-600 rounded-full text-[9px] font-bold border border-emerald-100 animate-pulse">
+                      正常载入
+                    </span>
                   )}
-                </motion.div>
-              ) : (
-                <motion.div 
-                  initial={{ opacity: 0, scale: 0.95 }}
-                  animate={{ opacity: 1, scale: 1 }}
-                  className="bg-slate-900 rounded-3xl p-8 text-white shadow-2xl shadow-slate-900/10"
-                >
-                  <div className="flex items-center justify-between mb-8">
-                    <h3 className="text-xs font-bold uppercase tracking-widest text-slate-500">统计摘要</h3>
-                    <div className="flex items-center gap-1.5 px-2 py-1 bg-emerald-500/10 text-emerald-400 rounded-full border border-emerald-500/20">
-                      <div className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse" />
-                      <span className="text-[10px] font-bold">同步中</span>
+                </div>
+
+                {!data.length ? (
+                  <motion.div 
+                    initial={{ opacity: 0, y: 10 }}
+                    animate={{ opacity: 1, y: 0 }}
+                    onDragOver={(e) => e.preventDefault()}
+                    onDrop={handleDrop}
+                    className="p-8 rounded-2xl border-2 border-dashed border-slate-200 flex flex-col items-center justify-center text-center relative group hover:border-blue-500 hover:bg-blue-50/10 transition-all duration-300 min-h-[160px]"
+                  >
+                    <input 
+                      type="file" 
+                      accept=".xlsx,.xls" 
+                      onChange={handleFileUpload}
+                      className="absolute inset-0 opacity-0 cursor-pointer z-10"
+                    />
+                    <div className="w-12 h-12 bg-blue-50 rounded-2xl flex items-center justify-center mb-4 text-blue-600 group-hover:scale-110 transition-transform">
+                      <Upload className="w-6 h-6" />
                     </div>
-                  </div>
-                  
-                  <div className="space-y-6">
-                    <div className="space-y-2">
-                      <p className="text-[10px] text-slate-500 font-bold uppercase tracking-widest">总数据吞吐</p>
-                      <div className="flex items-end gap-2">
-                        <span className="text-4xl font-bold font-mono leading-none tracking-tighter">{data.length.toLocaleString()}</span>
-                        <span className="text-xs text-slate-500 font-medium pb-1.5">行原始行</span>
+                    <h5 className="font-bold text-sm text-slate-800">拖拽主库存 Excel 到此处</h5>
+                    <p className="text-[10px] text-slate-400 mt-1">或点击选择本地文件格式 (.xlsx, .xls)</p>
+                    
+                    {isProcessing && (
+                      <div className="absolute inset-0 bg-white/95 backdrop-blur-sm rounded-2xl flex flex-col items-center justify-center z-20">
+                        <Loader2 className="w-8 h-8 text-blue-600 animate-spin mb-2" />
+                        <p className="text-[10px] font-bold text-slate-800 tracking-wider">正在解析数据...</p>
+                      </div>
+                    )}
+                  </motion.div>
+                ) : (
+                  <div className="bg-slate-900 rounded-2xl p-5 text-white shadow-md relative overflow-hidden">
+                    <div className="absolute -right-6 -bottom-6 w-20 h-20 bg-white/5 rounded-full" />
+                    <div className="space-y-4">
+                      <div>
+                        <p className="text-[9px] text-slate-500 uppercase tracking-widest font-bold">已连接库存文件</p>
+                        <p className="text-sm font-bold truncate mt-1 text-slate-100">{fileName}</p>
+                      </div>
+                      <div className="grid grid-cols-2 gap-2 border-t border-slate-800 pt-3">
+                        <div>
+                          <p className="text-[9px] text-slate-500 uppercase">数据吞吐行数</p>
+                          <p className="text-lg font-bold font-mono tracking-tight text-blue-400">{data.length}</p>
+                        </div>
+                        <div>
+                          <p className="text-[9px] text-slate-500 uppercase">已锁定库位数</p>
+                          <p className="text-lg font-bold font-mono tracking-tight text-emerald-400">{results.length}</p>
+                        </div>
+                      </div>
+                      <div className="flex gap-2">
+                        <button 
+                          onClick={exportToExcel}
+                          className="flex-1 flex items-center justify-center gap-1.5 bg-emerald-600 hover:bg-emerald-500 text-white font-bold py-2 rounded-xl text-xs transition-colors shadow-md active:scale-95"
+                        >
+                          <Download className="w-3.5 h-3.5" />
+                          导出库位表
+                        </button>
+                        <button 
+                          onClick={() => { setData([]); setResults([]); setFileName(''); }}
+                          className="px-3 bg-slate-800 hover:bg-slate-700 text-slate-400 hover:text-white rounded-xl text-xs transition-colors"
+                          title="置空当前库存数据"
+                        >
+                          重置
+                        </button>
                       </div>
                     </div>
+                  </div>
+                )}
+              </div>
 
-                    <div className="space-y-2">
-                      <p className="text-[10px] text-slate-500 font-bold uppercase tracking-widest">已识别库位</p>
-                      <div className="flex items-end gap-2">
-                        <span className="text-4xl font-bold font-mono leading-none tracking-tighter text-blue-400">{results.length}</span>
-                        <span className="text-xs text-slate-500 font-medium pb-1.5">有效库区</span>
+              {/* Card 2: Work Order -> Customer Relations Mapping */}
+              <div className="bg-white p-6 rounded-3xl border border-slate-200 shadow-sm flex flex-col gap-4">
+                <div className="flex items-center justify-between pb-3 border-b border-slate-100">
+                  <h4 className="text-xs font-bold uppercase tracking-wider text-slate-500 flex items-center gap-2">
+                    <span className="w-5 h-5 rounded-full bg-violet-100 text-violet-600 flex items-center justify-center font-bold text-[10px]">2</span>
+                    工单与客户对照表
+                  </h4>
+                  {mappingFileName && (
+                    <span className="px-2 py-0.5 bg-violet-50 text-violet-600 rounded-full text-[9px] font-bold border border-violet-100 animate-pulse">
+                      对照正常
+                    </span>
+                  )}
+                </div>
+
+                {!mappingFileName ? (
+                  <motion.div 
+                    initial={{ opacity: 0, y: 10 }}
+                    animate={{ opacity: 1, y: 0 }}
+                    onDragOver={(e) => e.preventDefault()}
+                    onDrop={handleMappingDrop}
+                    className="p-8 rounded-2xl border-2 border-dashed border-slate-200 flex flex-col items-center justify-center text-center relative group hover:border-violet-500 hover:bg-violet-50/10 transition-all duration-300 min-h-[160px]"
+                  >
+                    <input 
+                      type="file" 
+                      accept=".xlsx,.xls" 
+                      onChange={handleMappingFileUpload}
+                      className="absolute inset-0 opacity-0 cursor-pointer z-10"
+                    />
+                    <div className="w-12 h-12 bg-violet-50 rounded-2xl flex items-center justify-center mb-4 text-violet-600 group-hover:scale-110 transition-transform">
+                      <Package className="w-6 h-6 animate-pulse" />
+                    </div>
+                    <h5 className="font-bold text-sm text-slate-800">拖拽工单-客户对照表此处</h5>
+                    <p className="text-[10px] text-slate-400 mt-1">建立库存销售单号/工单号与客户名称对应关系</p>
+                  </motion.div>
+                ) : (
+                  <div className="bg-violet-950 rounded-2xl p-5 text-white shadow-md relative overflow-hidden">
+                    <div className="absolute -right-6 -bottom-6 w-20 h-20 bg-white/5 rounded-full" />
+                    <div className="space-y-4">
+                      <div>
+                        <p className="text-[9px] text-violet-400 uppercase tracking-widest font-bold">已连接对照字典</p>
+                        <p className="text-sm font-bold truncate mt-1 text-slate-100">{mappingFileName}</p>
+                      </div>
+                      <div className="grid grid-cols-2 gap-2 border-t border-violet-900 pt-3">
+                        <div>
+                          <p className="text-[9px] text-violet-400 uppercase">已识别关联规则</p>
+                          <p className="text-lg font-bold font-mono tracking-tight text-violet-300">{Object.keys(orderCustomerMap).length} 条</p>
+                        </div>
+                        <div>
+                          <p className="text-[9px] text-violet-400 uppercase">已翻译关联客户</p>
+                          <p className="text-lg font-bold font-mono tracking-tight text-violet-300">{customerStats.filter(c => c.customerName !== '未映射客户').length} 位</p>
+                        </div>
+                      </div>
+                      <div className="flex gap-2">
+                        {customerStats.length > 0 && (
+                          <button 
+                            onClick={exportCustomerStatsToExcel}
+                            className="flex-1 flex items-center justify-center gap-1.5 bg-violet-750 hover:bg-violet-650 text-white font-bold py-2 rounded-xl text-xs transition-colors border border-violet-600 shadow-md active:scale-95"
+                          >
+                            <Download className="w-3.5 h-3.5" />
+                            导出客户统计
+                          </button>
+                        )}
+                        <button 
+                          onClick={clearMapping}
+                          className="px-3 bg-violet-900 hover:bg-violet-800 text-violet-300 hover:text-white rounded-xl text-xs transition-colors"
+                          title="置空对应关系对照字典"
+                        >
+                          清除
+                        </button>
                       </div>
                     </div>
-
-                    <div className="pt-6 space-y-3">
-                      <button 
-                        onClick={exportToExcel}
-                        className="w-full flex items-center justify-center gap-3 bg-emerald-600 hover:bg-emerald-500 text-white font-bold py-4 rounded-2xl transition-all shadow-xl shadow-emerald-900/30 active:scale-[0.98]"
-                      >
-                        <Download className="w-5 h-5" />
-                        导出库位统计表
-                      </button>
-                      
-                      <button 
-                        onClick={reset}
-                        className="w-full text-slate-500 hover:text-slate-300 text-[10px] font-bold uppercase tracking-[0.2em] pt-4 transition-colors block text-center"
-                      >
-                        清空并重置环境
-                      </button>
-                    </div>
                   </div>
-                </motion.div>
-              )}
+                )}
+              </div>
 
+              {/* Requirements Guidelines */}
               <div className="bg-white p-7 rounded-3xl border border-slate-200 shadow-sm relative overflow-hidden group">
                 <div className="absolute top-0 right-0 w-24 h-24 bg-blue-50 rounded-full -mr-12 -mt-12 group-hover:scale-110 transition-transform duration-700 opacity-60" />
                 <h3 className="text-xs font-bold uppercase tracking-widest text-slate-400 mb-6 flex items-center gap-2">
                   <MapPin className="w-3 h-3" />
-                  结构化字段要求
+                  Excel 格式要求指引
                 </h3>
                 <div className="space-y-4">
-                  <div className="flex flex-col gap-1 p-4 bg-slate-50 rounded-2xl border border-slate-100 group-hover:bg-white transition-colors">
-                    <span className="text-xs font-bold text-slate-900">库位名称</span>
-                    <span className="text-[10px] text-slate-400 uppercase tracking-tighter">必填 • 字符串格式</span>
+                  <div className="p-3 bg-slate-50 rounded-2xl border border-slate-100">
+                    <span className="text-[10px] font-bold text-blue-600 uppercase block mb-1">库存源数据列名需包含：</span>
+                    <ul className="text-[10px] text-slate-500 list-disc list-inside space-y-0.5">
+                      <li><b>库位名称</b> (如 C36-1)</li>
+                      <li><b>箱号</b> (唯一标识符)</li>
+                      <li><b>功率档</b> / <b>工单号</b> (可选)</li>
+                    </ul>
                   </div>
-                  <div className="flex flex-col gap-1 p-4 bg-slate-50 rounded-2xl border border-slate-100 group-hover:bg-white transition-colors">
-                    <span className="text-xs font-bold text-slate-900">箱号</span>
-                    <span className="text-[10px] text-slate-400 uppercase tracking-tighter">必填 • 唯一标识符</span>
+                  <div className="p-3 bg-slate-50 rounded-2xl border border-slate-100">
+                    <span className="text-[10px] font-bold text-violet-600 block mb-1">对照关系表列名需包含：</span>
+                    <ul className="text-[10px] text-slate-500 list-disc list-inside space-y-0.5">
+                      <li>含有 <b>工单/销售单</b> 关键字的列</li>
+                      <li>含有 <b>客户/Client</b> 关键字的列</li>
+                    </ul>
                   </div>
-                  <p className="text-[10px] text-slate-400 leading-relaxed font-medium px-1">
-                    系统将按每个<b>库位</b>作为主键，统计其所包含的独立不重复<b>箱号</b>之和。
-                  </p>
                 </div>
               </div>
             </div>
@@ -767,50 +1077,50 @@ export default function App() {
                     </div>
                   </motion.div>
 
-                  {/* Mixed Order Alerts Summary */}
+                  {/* Mixed Customer Alerts Summary */}
                   <motion.div 
                     initial={{ opacity: 0, y: 10 }}
                     animate={{ opacity: 1, y: 0 }}
                     transition={{ delay: 0.3 }}
                     className={cn(
                       "rounded-3xl p-6 border shadow-sm",
-                      mixedOrderAlerts.length > 0 ? "bg-blue-50 border-blue-100" : "bg-white border-slate-200"
+                      mixedCustomerAlerts.length > 0 ? "bg-blue-50 border-blue-100" : "bg-white border-slate-200"
                     )}
                   >
                     <div className="flex items-center justify-between mb-4">
                       <div className="flex items-center gap-2">
                         <h4 className="text-sm font-bold flex items-center gap-2 text-nowrap">
-                          <History className={cn("w-4 h-4", mixedOrderAlerts.length > 0 ? "text-blue-500" : "text-slate-400")} />
-                          工单混载监测
+                          <History className={cn("w-4 h-4", mixedCustomerAlerts.length > 0 ? "text-blue-500" : "text-slate-400")} />
+                          客户混载监测
                         </h4>
-                        {mixedOrderAlerts.length > 0 && (
+                        {mixedCustomerAlerts.length > 0 && (
                           <button 
-                            onClick={exportOrdersToExcel}
+                            onClick={exportCustomerAlertsToExcel}
                             className="p-1.5 hover:bg-blue-100 text-blue-600 rounded-lg transition-colors group/btn"
-                            title="导出工单混载"
+                            title="导出客户混载"
                           >
                             <Download className="w-3.5 h-3.5" />
                           </button>
                         )}
                       </div>
-                      <span className={cn("text-xl font-black", mixedOrderAlerts.length > 0 ? "text-blue-600" : "text-slate-400")}>
-                        {mixedOrderAlerts.length}
+                      <span className={cn("text-xl font-black", mixedCustomerAlerts.length > 0 ? "text-blue-600" : "text-slate-400")}>
+                        {mixedCustomerAlerts.length}
                       </span>
                     </div>
                     <div className="max-h-24 overflow-y-auto pr-2 scrollbar-thin">
-                      {mixedOrderAlerts.length > 0 ? (
+                      {mixedCustomerAlerts.length > 0 ? (
                         <div className="space-y-3">
-                          {mixedOrderAlerts.map((alert, i) => (
+                          {mixedCustomerAlerts.map((alert, i) => (
                             <div key={i} className="flex flex-col p-3 bg-white rounded-xl border border-blue-200 text-[10px] shadow-sm">
                               <div className="font-bold text-slate-800 mb-2 flex items-center gap-1">
                                 <Package className="w-3 h-3 text-blue-400" />
                                 {alert.location}
                               </div>
                               <div className="space-y-1">
-                                {Object.keys(alert.orderDetails).map(o => (
-                                  <div key={o} className="flex items-center justify-between text-slate-500">
-                                    <span className="truncate max-w-[100px]" title={o}>{o}</span>
-                                    <span className="font-mono text-blue-600 bg-blue-50 px-1.5 rounded">{alert.orderDetails[o].length}箱</span>
+                                {Object.keys(alert.customerDetails).map(c => (
+                                  <div key={c} className="flex items-center justify-between text-slate-500">
+                                    <span className="truncate max-w-[100px]" title={c}>{c}</span>
+                                    <span className="font-mono text-blue-600 bg-blue-50 px-1.5 rounded">{alert.customerDetails[c].length}箱</span>
                                   </div>
                                 ))}
                               </div>
@@ -818,7 +1128,7 @@ export default function App() {
                           ))}
                         </div>
                       ) : (
-                        <p className="text-slate-400 text-xs italic">库位工单单一，未发现混载</p>
+                        <p className="text-slate-400 text-xs italic">库位客户单一，未发现混载</p>
                       )}
                     </div>
                   </motion.div>
@@ -827,105 +1137,197 @@ export default function App() {
 
               {/* Main Detail Table */}
               <div className="bg-white rounded-3xl border border-slate-200 shadow-sm overflow-hidden flex flex-col flex-1">
-                <div className="p-8 border-b border-slate-100 flex items-center justify-between bg-white z-20">
+                <div className="p-6 border-b border-slate-100 flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between bg-white z-20">
                   <div>
                     <h3 className="font-bold text-xl text-slate-900 tracking-tight">分析明细看板</h3>
-                    <p className="text-xs text-slate-400 font-medium">分组统计库位上的箱号总量</p>
+                    <p className="text-xs text-slate-400 font-medium">
+                      {activeTab === 'location' ? '统计并展示各库位上的箱号负载与余位数量' : '对照翻译显示各客户包含的总箱数及库位分布'}
+                    </p>
                   </div>
-                  {results.length > 0 && (
-                    <div className="hidden sm:flex items-center gap-4">
-                      <div className="text-right">
-                        <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">记录数</p>
-                        <p className="text-sm font-bold text-slate-800">{results.length}</p>
-                      </div>
-                      <div className="w-px h-8 bg-slate-100" />
+
+                  <div className="flex items-center gap-4 self-start sm:self-auto">
+                    {/* Tab Segment Controller */}
+                    <div className="flex bg-slate-100 p-1 rounded-xl">
                       <button 
-                        onClick={exportToExcel}
-                        className="p-2.5 bg-slate-50 hover:bg-slate-100 text-slate-600 rounded-xl border border-slate-200 transition-colors"
+                        onClick={() => setActiveTab('location')}
+                        className={cn(
+                          "px-4 py-1.5 text-xs font-bold rounded-lg transition-all flex items-center gap-1.5",
+                          activeTab === 'location' ? "bg-white text-slate-950 shadow-sm" : "text-slate-550 hover:text-slate-900"
+                        )}
                       >
-                        <Download className="w-4 h-4" />
+                        <MapPin className="w-3.5 h-3.5" />
+                        按库位
+                      </button>
+                      <button 
+                        onClick={() => setActiveTab('customer')}
+                        className={cn(
+                          "px-4 py-1.5 text-xs font-bold rounded-lg transition-all flex items-center gap-1.5",
+                          activeTab === 'customer' ? "bg-white text-slate-950 shadow-sm" : "text-slate-550 hover:text-slate-900"
+                        )}
+                      >
+                        <Package className="w-3.5 h-3.5" />
+                        按客户
                       </button>
                     </div>
-                  )}
+
+                    {(activeTab === 'location' ? results.length > 0 : customerStats.length > 0) && (
+                      <div className="flex items-center gap-3">
+                        <div className="w-px h-8 bg-slate-100 hidden sm:block" />
+                        <button 
+                          onClick={activeTab === 'location' ? exportToExcel : exportCustomerStatsToExcel}
+                          className="p-2.5 bg-slate-50 hover:bg-slate-100 text-slate-605 rounded-xl border border-slate-200 transition-colors flex items-center gap-1.5 shrink-0 text-xs font-bold"
+                          title="导出当前分表为 Excel"
+                        >
+                          <Download className="w-4 h-4" />
+                          <span>导出 Excel</span>
+                        </button>
+                      </div>
+                    )}
+                  </div>
                 </div>
 
                 <div className="flex-1 overflow-auto">
                   <table className="w-full border-collapse">
-                    <thead className="sticky top-0 bg-white/95 backdrop-blur-sm z-10 border-b border-slate-100 shadow-sm shadow-slate-100/50">
-                      <tr className="text-left">
-                        <th className="pl-8 pr-4 py-5 text-[10px] font-bold text-slate-400 uppercase tracking-[0.2em] w-16">顺序</th>
-                        <th className="px-6 py-5 text-[10px] font-bold text-slate-400 uppercase tracking-[0.2em]">库位名称</th>
-                        <th className="px-6 py-5 text-[10px] font-bold text-slate-400 uppercase tracking-[0.2em] text-center">箱号数量</th>
-                        <th className="px-6 py-5 text-[10px] font-bold text-slate-400 uppercase tracking-[0.2em] text-right pr-12">可入库数量 (标准18)</th>
-                      </tr>
-                    </thead>
-                    <tbody className="divide-y divide-slate-50">
-                      {results.length > 0 ? (
-                        results.map((row, i) => (
-                          <motion.tr 
-                            key={i}
-                            initial={{ opacity: 0, y: 10 }}
-                            animate={{ opacity: 1, y: 0 }}
-                            transition={{ delay: i * 0.015, duration: 0.3 }}
-                            className="hover:bg-slate-50/50 transition-all duration-200 group"
-                          >
-                            <td className="pl-8 pr-4 py-4 text-[10px] font-mono font-bold text-slate-300 group-hover:text-blue-400 transition-colors">
-                              {String(i + 1).padStart(2, '0')}
-                            </td>
-                            <td className="px-6 py-4">
-                              <div className="flex items-center gap-3">
-                                <div className={cn(
-                                  "w-2 h-2 rounded-full scale-50 group-hover:scale-100 transition-all",
-                                  row['箱号数量'] > 18 ? "bg-red-500 shadow-[0_0_8px_rgba(239,68,68,0.5)]" : 
-                                  row['箱号数量'] < 18 ? "bg-emerald-500 shadow-[0_0_8px_rgba(16,185,129,0.5)]" : 
-                                  "bg-slate-900 shadow-[0_0_8px_rgba(15,23,42,0.3)]"
-                                )} />
-                                <span className={cn(
-                                  "text-sm font-bold transition-colors",
-                                  row['箱号数量'] > 18 ? "text-red-600" : 
-                                  row['箱号数量'] < 18 ? "text-emerald-700" : 
-                                  "text-slate-900"
-                                )}>
-                                  {row['库位名称']}
-                                </span>
-                              </div>
-                            </td>
-                            <td className="px-6 py-4 text-center">
-                              <span className={cn(
-                                "text-sm font-mono font-bold tabular-nums px-3 py-1 rounded-full",
-                                row['箱号数量'] > 18 ? "bg-red-50 text-red-600" : 
-                                row['箱号数量'] < 18 ? "bg-emerald-50 text-emerald-600" : 
-                                "bg-slate-100 text-slate-900"
-                              )}>
-                                {row['箱号数量']}
-                              </span>
-                            </td>
-                            <td className="px-6 py-4 text-right pr-12">
-                              <span className={cn(
-                                "text-sm font-mono font-bold tabular-nums transition-colors",
-                                row['可入库数量'] < 0 ? "text-red-500" : 
-                                row['可入库数量'] > 0 ? "text-emerald-500" : 
-                                "text-slate-900"
-                              )}>
-                                {row['可入库数量'] > 0 ? `+${row['可入库数量']}` : row['可入库数量']}
-                              </span>
-                            </td>
-                          </motion.tr>
-                        ))
-                      ) : (
-                        <tr>
-                          <td colSpan={3} className="px-8 py-32 text-center">
-                            <div className="flex flex-col items-center justify-center">
-                              <div className="w-16 h-16 bg-slate-50 rounded-full flex items-center justify-center mb-4 text-slate-200">
-                                <TableIcon className="w-8 h-8" />
-                              </div>
-                              <p className="text-sm font-bold text-slate-400 tracking-wide">等待分析文件载入...</p>
-                              <p className="text-[10px] text-slate-300 uppercase font-medium mt-1">请上传包含箱号信息的库存 Excel</p>
-                            </div>
-                          </td>
-                        </tr>
-                      )}
-                    </tbody>
+                    {activeTab === 'location' ? (
+                      <>
+                        <thead className="sticky top-0 bg-white/95 backdrop-blur-sm z-10 border-b border-slate-100 shadow-sm shadow-slate-100/50">
+                          <tr className="text-left">
+                            <th className="pl-8 pr-4 py-5 text-[10px] font-bold text-slate-400 uppercase tracking-[0.2em] w-16">顺序</th>
+                            <th className="px-6 py-5 text-[10px] font-bold text-slate-400 uppercase tracking-[0.2em]">库位名称</th>
+                            <th className="px-6 py-5 text-[10px] font-bold text-slate-400 uppercase tracking-[0.2em] text-center">箱号数量</th>
+                            <th className="px-6 py-5 text-[10px] font-bold text-slate-400 uppercase tracking-[0.2em] text-right pr-12">可入库数量 (标准18)</th>
+                          </tr>
+                        </thead>
+                        <tbody className="divide-y divide-slate-50">
+                          {results.length > 0 ? (
+                            results.map((row, i) => (
+                              <motion.tr 
+                                key={i}
+                                initial={{ opacity: 0, y: 10 }}
+                                animate={{ opacity: 1, y: 0 }}
+                                transition={{ delay: i * 0.015, duration: 0.3 }}
+                                className="hover:bg-slate-50/50 transition-all duration-200 group"
+                              >
+                                <td className="pl-8 pr-4 py-4 text-[10px] font-mono font-bold text-slate-300 group-hover:text-blue-400 transition-colors">
+                                  {String(i + 1).padStart(2, '0')}
+                                </td>
+                                <td className="px-6 py-4">
+                                  <div className="flex items-center gap-3">
+                                    <div className={cn(
+                                      "w-2 h-2 rounded-full scale-50 group-hover:scale-100 transition-all",
+                                      row['箱号数量'] > 18 ? "bg-red-500 shadow-[0_0_8px_rgba(239,68,68,0.5)]" : 
+                                      row['箱号数量'] < 18 ? "bg-emerald-500 shadow-[0_0_8px_rgba(16,185,129,0.5)]" : 
+                                      "bg-slate-900 shadow-[0_0_8px_rgba(15,23,42,0.3)]"
+                                    )} />
+                                    <span className={cn(
+                                      "text-sm font-bold transition-colors",
+                                      row['箱号数量'] > 18 ? "text-red-600" : 
+                                      row['箱号数量'] < 18 ? "text-emerald-700" : 
+                                      "text-slate-900"
+                                    )}>
+                                      {row['库位名称']}
+                                    </span>
+                                  </div>
+                                </td>
+                                <td className="px-6 py-4 text-center">
+                                  <span className={cn(
+                                    "text-sm font-mono font-bold tabular-nums px-3 py-1 rounded-full",
+                                    row['箱号数量'] > 18 ? "bg-red-50 text-red-600" : 
+                                    row['箱号数量'] < 18 ? "bg-emerald-50 text-emerald-600" : 
+                                    "bg-slate-100 text-slate-900"
+                                  )}>
+                                    {row['箱号数量']}
+                                  </span>
+                                </td>
+                                <td className="px-6 py-4 text-right pr-12">
+                                  <span className={cn(
+                                    "text-sm font-mono font-bold tabular-nums transition-colors",
+                                    row['可入库数量'] < 0 ? "text-red-500" : 
+                                    row['可入库数量'] > 0 ? "text-emerald-500" : 
+                                    "text-slate-900"
+                                  )}>
+                                    {row['可入库数量'] > 0 ? `+${row['可入库数量']}` : row['可入库数量']}
+                                  </span>
+                                </td>
+                              </motion.tr>
+                            ))
+                          ) : (
+                            <tr>
+                              <td colSpan={4} className="px-8 py-32 text-center">
+                                <div className="flex flex-col items-center justify-center">
+                                  <div className="w-16 h-16 bg-slate-50 rounded-full flex items-center justify-center mb-4 text-slate-200">
+                                    <TableIcon className="w-8 h-8" />
+                                  </div>
+                                  <p className="text-sm font-bold text-slate-400 tracking-wide">等待分析文件载入...</p>
+                                  <p className="text-[10px] text-slate-300 uppercase font-medium mt-1">请上传包含箱号信息的库存 Excel</p>
+                                </div>
+                              </td>
+                            </tr>
+                          )}
+                        </tbody>
+                      </>
+                    ) : (
+                      <>
+                        <thead className="sticky top-0 bg-white/95 backdrop-blur-sm z-10 border-b border-slate-100 shadow-sm shadow-slate-100/50">
+                          <tr className="text-left">
+                            <th className="pl-8 pr-4 py-5 text-[10px] font-bold text-slate-400 uppercase tracking-[0.2em] w-16">顺序</th>
+                            <th className="px-6 py-5 text-[10px] font-bold text-slate-400 uppercase tracking-[0.2em]">客户名称</th>
+                            <th className="px-6 py-5 text-[10px] font-bold text-slate-400 uppercase tracking-[0.2em] text-center">占箱数</th>
+                            <th className="px-6 py-5 text-[10px] font-bold text-slate-400 uppercase tracking-[0.2em] pr-12">占用库位明细</th>
+                          </tr>
+                        </thead>
+                        <tbody className="divide-y divide-slate-50">
+                          {customerStats.length > 0 ? (
+                            customerStats.map((row, i) => (
+                              <motion.tr 
+                                key={i}
+                                initial={{ opacity: 0, y: 10 }}
+                                animate={{ opacity: 1, y: 0 }}
+                                transition={{ delay: i * 0.015, duration: 0.3 }}
+                                className="hover:bg-slate-50/50 transition-all duration-200 group"
+                              >
+                                <td className="pl-8 pr-4 py-4 text-[10px] font-mono font-bold text-slate-300 group-hover:text-violet-400 transition-colors">
+                                  {String(i + 1).padStart(2, '0')}
+                                </td>
+                                <td className="px-6 py-4">
+                                  <span className="text-sm font-bold text-slate-900 block">
+                                    {row.customerName}
+                                  </span>
+                                </td>
+                                <td className="px-6 py-4 text-center">
+                                  <span className="text-sm font-mono font-bold bg-violet-50 text-violet-600 px-3 py-1 rounded-full border border-violet-100">
+                                    {row.boxCount} 箱
+                                  </span>
+                                </td>
+                                <td className="px-6 py-4 pr-12">
+                                  <div className="flex flex-wrap gap-1.5 max-h-24 overflow-y-auto pr-1">
+                                    {row.locations.map(loc => (
+                                      <span key={loc} className="px-2 py-0.5 bg-slate-100 text-slate-600 text-[10px] font-mono rounded font-bold border border-slate-200">
+                                        {loc}
+                                      </span>
+                                    ))}
+                                  </div>
+                                </td>
+                              </motion.tr>
+                            ))
+                          ) : (
+                            <tr>
+                              <td colSpan={4} className="px-8 py-32 text-center">
+                                <div className="flex flex-col items-center justify-center max-w-sm mx-auto">
+                                  <div className="w-16 h-16 bg-violet-55 text-violet-500 rounded-full flex items-center justify-center mb-4">
+                                    <Package className="w-8 h-8" />
+                                  </div>
+                                  <p className="text-sm font-bold text-slate-600">未发现客户关联统计数据</p>
+                                  <p className="text-xs text-slate-400 mt-2 leading-relaxed">
+                                    欲按“客户”维度归类分析箱数，请在左侧上传带有工单及客户信息的 <b>对照表</b>。系统支持在拖拽上传后实时计算并加载该明细视图。
+                                  </p>
+                                </div>
+                              </td>
+                            </tr>
+                          )}
+                        </tbody>
+                      </>
+                    )}
                   </table>
                 </div>
 
