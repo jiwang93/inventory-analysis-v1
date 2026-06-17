@@ -1,0 +1,9 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // 允许任何客户端读写工单-客户对照表映射关系数据，以便多终端共享
+    match /mappings/{document} {
+      allow read, write: if true;
+    }
+  }
+}

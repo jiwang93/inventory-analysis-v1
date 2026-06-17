@@ -1,0 +1,14 @@
+{
+  "collections": {
+    "mappings": {
+      "description": "存储上传的工单与客户对照表，支持不同客户端下载、共享以及云端自动同步",
+      "documents": {
+        "latest": {
+          "mappingFileName": "string",
+          "orderCustomerMap": "object",
+          "updatedAt": "timestamp"
+        }
+      }
+    }
+  }
+}

@@ -23,11 +23,16 @@ import {
   BarChart3,
   Loader2,
   ShieldAlert,
-  Save
+  Save,
+  Cloud,
+  CloudUpload,
+  CloudDownload,
+  RefreshCw
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { jsPDF } from 'jspdf';
 import { cn } from './lib/utils';
+import { db, collection, addDoc, getDocs, query, orderBy, limit, doc, getDoc, setDoc } from './lib/firebase';
 
 interface InventoryRow {
   '箱号': string | number;
@@ -100,10 +105,210 @@ export default function App() {
     return !!localStorage.getItem('mappingFileName');
   });
   const [saveSuccess, setSaveSuccess] = useState<string | null>(null);
+  const [totalRowsRaw, setTotalRowsRaw] = useState<number>(0);
+  const [nonAGradeCount, setNonAGradeCount] = useState<number>(0);
   const [activeTab, setActiveTab] = useState<'location' | 'customer' | 'correction'>('location');
   const [isProcessing, setIsProcessing] = useState(false);
   const [fileName, setFileName] = useState('');
   const [error, setError] = useState<string | null>(null);
+
+  // 云端存储相关 State (Firebase integration)
+  const [cloudMappings, setCloudMappings] = useState<Array<{ id: string; mappingFileName: string; count: number; updatedAt: string; orderCustomerMap: Record<string, string> }>>([]);
+  const [isCloudSaving, setIsCloudSaving] = useState(false);
+  const [isCloudLoading, setIsCloudLoading] = useState(false);
+  const [lastSyncedCloudTime, setLastSyncedCloudTime] = useState<string | null>(null);
+  const [isCloudSynced, setIsCloudSynced] = useState(false);
+
+  // 获取云端全部关系对照模板
+  const fetchCloudMappings = useCallback(async (autoLoadIfEmpty = false) => {
+    setIsCloudLoading(true);
+    try {
+      const q = query(collection(db, 'mappings'), orderBy('updatedAt', 'desc'), limit(15));
+      const querySnapshot = await getDocs(q);
+      const mappingsList: any[] = [];
+      querySnapshot.forEach((doc) => {
+        const itemData = doc.data();
+        if (doc.id !== 'latest') { 
+          mappingsList.push({
+            id: doc.id,
+            ...itemData
+          });
+        }
+      });
+      setCloudMappings(mappingsList);
+
+      // 若当前本地没有对照表，尝试从云端拉取最新的自动加载
+      if (autoLoadIfEmpty) {
+        let loadedDoc = null;
+        
+        // 优先查看 special "latest" doc
+        const latestDocRef = doc(db, 'mappings', 'latest');
+        try {
+          const latestDocSnap = await getDoc(latestDocRef);
+          if (latestDocSnap.exists()) {
+            loadedDoc = latestDocSnap.data();
+          }
+        } catch (e) {
+          console.log('No default latest file key found, trying collection');
+        }
+
+        // 如果未取到，直接走列表里的第一个
+        if (!loadedDoc && mappingsList.length > 0) {
+          loadedDoc = mappingsList[0];
+        }
+
+        if (loadedDoc && loadedDoc.orderCustomerMap) {
+          const loadedMap = loadedDoc.orderCustomerMap;
+          setOrderCustomerMap(loadedMap);
+          setMappingFileName(loadedDoc.mappingFileName || '云端同步对照模型');
+          setIsSaved(true);
+          setIsCloudSynced(true);
+          
+          const timeStr = loadedDoc.updatedAt ? new Date(loadedDoc.updatedAt).toLocaleTimeString() : '刚刚';
+          setLastSyncedCloudTime(timeStr);
+          
+          setSaveSuccess(`☁️ 已自动为您加载云端最新的对照模型：${loadedDoc.mappingFileName || '未知文件名'}`);
+          setTimeout(() => setSaveSuccess(null), 5000);
+        }
+      }
+    } catch (err: any) {
+      console.error('Failed to fetch cloud mappings:', err);
+    } finally {
+      setIsCloudLoading(false);
+    }
+  }, []);
+
+  // 组件装载时，自动拉取云端记录：如果本地为空就自动应用最新的
+  React.useEffect(() => {
+    const isLocalEmpty = !localStorage.getItem('mappingFileName') && Object.keys(orderCustomerMap).length === 0;
+    fetchCloudMappings(isLocalEmpty);
+  }, []);
+
+  // 永久同步关系值到 Firebase 云端
+  const saveMappingToCloud = async () => {
+    if (!mappingFileName || Object.keys(orderCustomerMap).length === 0) {
+      setError('无法保存：当前未加载任何工单客户对照表');
+      return;
+    }
+    setIsCloudSaving(true);
+    try {
+      const dataPayload = {
+        mappingFileName,
+        orderCustomerMap,
+        updatedAt: new Date().toISOString(),
+        count: Object.keys(orderCustomerMap).length,
+      };
+      
+      // 1. 存入历史集合
+      const docRef = await addDoc(collection(db, 'mappings'), dataPayload);
+      
+      // 2. 同时在 latest 文档上覆盖记录
+      await setDoc(doc(db, 'mappings', 'latest'), dataPayload);
+
+      setIsCloudSynced(true);
+      setLastSyncedCloudTime(new Date().toLocaleTimeString());
+      setSaveSuccess(`云端发布成功！共享 ID: ${docRef.id}，其它客户端刷新即可自动拉取最新。`);
+      setTimeout(() => setSaveSuccess(null), 5000);
+      
+      // 刷新列表
+      await fetchCloudMappings(false);
+    } catch (err: any) {
+      console.error(err);
+      setError('云端数据库同步失败：' + (err.message || String(err)));
+    } finally {
+      setIsCloudSaving(false);
+    }
+  };
+
+  // 应用云端版本到当前上下文中
+  const applyCloudMapping = (mappingItem: any) => {
+    if (!mappingItem || !mappingItem.orderCustomerMap) return;
+    setOrderCustomerMap(mappingItem.orderCustomerMap);
+    setMappingFileName(mappingItem.mappingFileName);
+    setIsSaved(true);
+    setIsCloudSynced(true);
+    setLastSyncedCloudTime(new Date(mappingItem.updatedAt).toLocaleTimeString());
+
+    setSaveSuccess(`已成功应用云端版本：${mappingItem.mappingFileName}`);
+    setTimeout(() => setSaveSuccess(null), 3000);
+
+    // 如果已加载了库存表，顺便连带重新计算分析
+    if (data.length > 0) {
+      performAnalysis(data, mappingItem.orderCustomerMap);
+    }
+  };
+
+  // 备份并下载云端对应文件为 Excel
+  const downloadCloudMappingAsExcel = async (mappingItem: any) => {
+    try {
+      const workbook = new ExcelJS.Workbook();
+      const worksheet = workbook.addWorksheet('云端关系对照备份');
+
+      worksheet.columns = [
+        { header: '序号', key: 'seq', width: 12 },
+        { header: '工单号 / 销售单号 (必填-列B)', key: 'orderNo', width: 28 },
+        { header: '辅助信息列1', key: 'remark1', width: 22 },
+        { header: '辅助信息列2', key: 'remark2', width: 22 },
+        { header: '辅助信息列3', key: 'remark3', width: 22 },
+        { header: '客户简称 / 客户名称 (必填-列F)', key: 'customerName', width: 32 },
+      ];
+
+      worksheet.views = [{ showGridLines: true }];
+
+      // Header rows layout style
+      const headerRow = worksheet.getRow(1);
+      headerRow.height = 30;
+      headerRow.eachCell((cell, colNumber) => {
+        cell.font = { name: '微软雅黑', size: 10, bold: true, color: { argb: 'FFFFFF' } };
+        cell.fill = {
+          type: 'pattern',
+          pattern: 'solid',
+          fgColor: { argb: colNumber === 2 || colNumber === 6 ? '78350F' : '475569' }
+        };
+        cell.alignment = { horizontal: 'center', vertical: 'middle' };
+      });
+
+      let seqIdx = 1;
+      Object.entries(mappingItem.orderCustomerMap || {}).forEach(([orderNo, customerName]) => {
+        const row = worksheet.addRow({
+          seq: String(seqIdx++),
+          orderNo: orderNo,
+          remark1: '随处云端导入备份',
+          remark2: '',
+          remark3: '',
+          customerName: customerName
+        });
+        row.height = 22;
+        row.eachCell((cell, colNumber) => {
+          cell.font = { name: '微软雅黑', size: 10 };
+          cell.alignment = { horizontal: colNumber === 2 || colNumber === 6 ? 'left' : 'center', vertical: 'middle' };
+          if (colNumber === 2 || colNumber === 6) {
+            cell.fill = {
+              type: 'pattern',
+              pattern: 'solid',
+              fgColor: { argb: 'FFFBEB' } // light amber
+            };
+          }
+          cell.border = {
+            top: { style: 'thin', color: { argb: 'F1F5F9' } },
+            left: { style: 'thin', color: { argb: 'F1F5F9' } },
+            bottom: { style: 'thin', color: { argb: 'F1F5F9' } },
+            right: { style: 'thin', color: { argb: 'F1F5F9' } }
+          };
+        });
+      });
+
+      const buffer = await workbook.xlsx.writeBuffer();
+      const blob = new Blob([buffer], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
+      saveAs(blob, `${mappingItem.mappingFileName}_云端备份_${new Date(mappingItem.updatedAt).toLocaleDateString()}.xlsx`);
+      
+      setSaveSuccess(`已成功下载云端对照备份：${mappingItem.mappingFileName}`);
+      setTimeout(() => setSaveSuccess(null), 3000);
+    } catch (e: any) {
+      console.error(e);
+      setError('从云端生成 Excel 文件失败：' + (e.message || String(e)));
+    }
+  };
 
   const processFile = (file: File) => {
     setIsProcessing(true);
@@ -146,7 +351,13 @@ export default function App() {
         // 工单号标题的模糊位置 (作为 column J 越界或为空时的 fallback)
         let orderNoFallbackIdx = headers.findIndex(h => h.includes('工单') || h.includes('销售单') || h.toLowerCase().includes('order'));
 
+        // 箱等级标题的模糊位置 (作为 column K 越界或为空时的 fallback)
+        let gradeIdx = headers.findIndex(h => h.includes('箱等级') || h === '等级' || h.includes('等级') || h.toLowerCase() === 'grade');
+
         const parsedData: InventoryRow[] = [];
+        let totalRowsCount = 0;
+        let nonAGradeCountLocal = 0;
+
         for (let i = 1; i < arrayRows.length; i++) {
           const rowArr = arrayRows[i];
           if (!rowArr || rowArr.length === 0) continue;
@@ -155,6 +366,8 @@ export default function App() {
           const isAllEmpty = rowArr.every(val => val === undefined || val === null || String(val).trim() === '');
           if (isAllEmpty) continue;
           
+          totalRowsCount++;
+
           const boxVal = rowArr[boxIdx] !== undefined && rowArr[boxIdx] !== null ? String(rowArr[boxIdx]).trim() : '';
           const locVal = rowArr[locIdx] !== undefined && rowArr[locIdx] !== null ? String(rowArr[locIdx]).trim() : '';
           
@@ -166,6 +379,23 @@ export default function App() {
             orderNoVal = String(rowArr[orderNoFallbackIdx]).trim();
           }
 
+          // 箱等级在 K 列（Column K 是第 11 列，0-based 索引为 10）
+          let gradeVal = '';
+          if (rowArr.length > 10 && rowArr[10] !== undefined && rowArr[10] !== null && String(rowArr[10]).trim() !== '') {
+            gradeVal = String(rowArr[10]).trim();
+          } else if (gradeIdx !== -1 && rowArr[gradeIdx] !== undefined && rowArr[gradeIdx] !== null) {
+            gradeVal = String(rowArr[gradeIdx]).trim();
+          }
+
+          // 仅统计A等级: A, A等级, A级, a等级, a, etc. (不区分大小写，或startsWith 'A')
+          const gradeUpper = gradeVal.toUpperCase();
+          const isGradeA = gradeUpper === 'A' || gradeUpper === 'A等级' || gradeUpper === 'A级' || gradeUpper.startsWith('A-') || gradeUpper.startsWith('A_') || gradeUpper === 'A类' || gradeUpper === 'A-等级';
+
+          if (!isGradeA) {
+            nonAGradeCountLocal++;
+            continue;
+          }
+
           let powerIdx = headers.findIndex(h => h.includes('功率'));
           const powerVal = powerIdx !== -1 ? rowArr[powerIdx] : undefined;
 
@@ -174,14 +404,21 @@ export default function App() {
             '库位名称': locVal,
             '功率档': powerVal,
             '工单号': orderNoVal,
-            '销售单号': orderNoVal
+            '销售单号': orderNoVal,
+            '箱等级': gradeVal
           });
         }
 
         if (parsedData.length === 0) {
-          throw new Error('主库存表中没有成功加载有效数据行');
+          if (nonAGradeCountLocal > 0) {
+            throw new Error(`主库存表中检测到 ${totalRowsCount} 行数据，但 A 等级的箱数为 0 (过滤了 ${nonAGradeCountLocal} 行非 A 级的箱数，请检查 K 列或 [箱等级] 列是否正确)。`);
+          } else {
+            throw new Error('主库存表中没有成功加载有效数据行');
+          }
         }
 
+        setTotalRowsRaw(totalRowsCount);
+        setNonAGradeCount(nonAGradeCountLocal);
         setData(parsedData);
         performAnalysis(parsedData, orderCustomerMap);
       } catch (err) {
@@ -265,6 +502,8 @@ export default function App() {
         setOrderCustomerMap(newMap);
         setMappingFileName(file.name);
         setIsSaved(false);
+        setIsCloudSynced(false);
+        setLastSyncedCloudTime(null);
         
         if (data.length > 0) {
           performAnalysis(data, newMap);
@@ -718,6 +957,8 @@ export default function App() {
     setCustomerStats([]);
     setRelocationSuggestions([]);
     setIsSaved(true);
+    setIsCloudSynced(false);
+    setLastSyncedCloudTime(null);
     try {
       localStorage.removeItem('orderCustomerMap');
       localStorage.removeItem('mappingFileName');
@@ -742,6 +983,119 @@ export default function App() {
     } catch (e) {
       console.error(e);
       setError('本地保存失败，可能是对照表条数过多，超出了浏览器的 LocalStorage 容量限制（5MB）');
+    }
+  };
+
+  const downloadMappingTemplate = async () => {
+    try {
+      const workbook = new ExcelJS.Workbook();
+      const worksheet = workbook.addWorksheet('工单与客户关系对照表');
+
+      // Add columns
+      worksheet.columns = [
+        { header: '序号 (可留空)', key: 'seq', width: 12 },
+        { header: '工单号 / 销售单号 (必填-列B)', key: 'orderNo', width: 28 },
+        { header: '辅助信息列1 (可留空)', key: 'remark1', width: 22 },
+        { header: '辅助信息列2 (可留空)', key: 'remark2', width: 22 },
+        { header: '辅助信息列3 (可留空)', key: 'remark3', width: 22 },
+        { header: '客户简称 / 客户名称 (必填-列F)', key: 'customerName', width: 32 },
+      ];
+
+      // Enable grid lines
+      worksheet.views = [{ showGridLines: true }];
+
+      // Style header row
+      const headerRow = worksheet.getRow(1);
+      headerRow.height = 30;
+      headerRow.eachCell((cell, colNumber) => {
+        cell.font = { name: '微软雅黑', size: 10, bold: true, color: { argb: 'FFFFFF' } };
+        if (colNumber === 2 || colNumber === 6) {
+          cell.fill = {
+            type: 'pattern',
+            pattern: 'solid',
+            fgColor: { argb: '7C3AED' } // Violet color for active columns
+          };
+        } else {
+          cell.fill = {
+            type: 'pattern',
+            pattern: 'solid',
+            fgColor: { argb: '475569' } // Slate color for decorative columns
+          };
+        }
+        cell.alignment = { horizontal: 'center', vertical: 'middle' };
+        cell.border = {
+          top: { style: 'thin', color: { argb: 'E2E8F0' } },
+          left: { style: 'thin', color: { argb: 'E2E8F0' } },
+          bottom: { style: 'medium', color: { argb: '000000' } },
+          right: { style: 'thin', color: { argb: 'E2E8F0' } }
+        };
+      });
+
+      // Sample data rows
+      const samples = [
+        { seq: '1', orderNo: 'WO-2026001', remark1: '示例数据-销售单A', remark2: '', remark3: '', customerName: '华能电力' },
+        { seq: '2', orderNo: 'WO-2026002', remark1: '示例数据-销售单B', remark2: '', remark3: '', customerName: '中广核' },
+        { seq: '3', orderNo: 'WO-2026003', remark1: '示例数据-销售单C', remark2: '', remark3: '', customerName: '大唐集团' },
+        { seq: '4', orderNo: 'WO-2026004', remark1: '示例数据-销售单D', remark2: '', remark3: '', customerName: '国家电投' }
+      ];
+
+      samples.forEach((sample) => {
+        const row = worksheet.addRow({
+          seq: sample.seq,
+          orderNo: sample.orderNo,
+          remark1: sample.remark1,
+          remark2: sample.remark2,
+          remark3: sample.remark3,
+          customerName: sample.customerName
+        });
+        row.height = 22;
+        row.eachCell((cell, colNumber) => {
+          cell.font = { name: '微软雅黑', size: 10 };
+          cell.alignment = { horizontal: colNumber === 2 || colNumber === 6 ? 'left' : 'center', vertical: 'middle' };
+          if (colNumber === 2 || colNumber === 6) {
+            cell.fill = {
+              type: 'pattern',
+              pattern: 'solid',
+              fgColor: { argb: 'F5F3FF' } // light violet highlight
+            };
+          }
+          cell.border = {
+            top: { style: 'thin', color: { argb: 'F1F5F9' } },
+            left: { style: 'thin', color: { argb: 'F1F5F9' } },
+            bottom: { style: 'thin', color: { argb: 'F1F5F9' } },
+            right: { style: 'thin', color: { argb: 'F1F5F9' } }
+          };
+        });
+      });
+
+      // Spacer and notes
+      worksheet.addRow([]);
+      const rHeader = worksheet.addRow(['⚠️ 对照表格式说明及自动解析规则：']);
+      rHeader.getCell(1).font = { name: '微软雅黑', size: 10, bold: true, color: { argb: '7C3AED' } };
+
+      const notes = [
+        '1. 【核心解析列】：程序默认自动扫描 Excel 工作表中的 [第 B 列 (B)] 作为工单号或销售单号，以及 [第 F 列 (F)] 作为对应的客户简称。',
+        '2. 【表头智能模糊识别】：首行的标题若模糊匹配 “工单”、“销售单”、“客户简称” 或 “客户”，程序将自适应该列。如果是标准表头，首行将不导入。',
+        '3. 【多列自由扩展】：除列 B、列 F 两个主映射字段外，其他列 (如 A, C, D, E 等) 您可以放任意辅助文字信息或保持空白，不会打乱正常的数据映射加载。',
+        '4. 【免重复上传】：关联对照表上传并展现关联词组数目后，请务必点击卡片下方的【确认保存至本地（后续免上传）】按钮。数据将牢固存储于您的浏览器内部存储中，今后再上传新库存表格，均会自动翻译转换。'
+      ];
+
+      notes.forEach(note => {
+        const r = worksheet.addRow([note]);
+        r.getCell(1).font = { name: '微软雅黑', size: 9, color: { argb: '475569' } };
+      });
+
+      const buffer = await workbook.xlsx.writeBuffer();
+      const blob = new Blob([buffer], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
+      saveAs(blob, '工单与客户关系对照表_标准模板.xlsx');
+
+      setSaveSuccess('工单客户对照表标准模板已下载成功！');
+      setTimeout(() => {
+        setSaveSuccess(null);
+      }, 4000);
+    } catch (e) {
+      console.error(e);
+      setError('模板生成失败，请刷新页面或者重试');
     }
   };
 
@@ -1095,6 +1449,8 @@ export default function App() {
     setRelocationSuggestions([]);
     setCustomerStats([]);
     setFileName('');
+    setTotalRowsRaw(0);
+    setNonAGradeCount(0);
     setError(null);
   };
 
@@ -1209,12 +1565,18 @@ export default function App() {
                       </div>
                       <div className="grid grid-cols-2 gap-2 border-t border-slate-800 pt-3">
                         <div>
-                          <p className="text-[9px] text-slate-500 uppercase">数据吞吐行数</p>
-                          <p className="text-lg font-bold font-mono tracking-tight text-blue-400">{data.length}</p>
+                          <p className="text-[9px] text-slate-500 uppercase">A级有效箱数</p>
+                          <p className="text-lg font-bold font-mono tracking-tight text-blue-400">{data.length} 箱</p>
+                          {nonAGradeCount > 0 && (
+                            <p className="text-[8px] text-amber-400 mt-0.5 flex items-center gap-0.5">
+                              <span className="w-1 h-1 rounded-full bg-amber-500 shrink-0" />
+                              已自动过滤 {nonAGradeCount} 箱非A级
+                            </p>
+                          )}
                         </div>
                         <div>
                           <p className="text-[9px] text-slate-500 uppercase">已锁定库位数</p>
-                          <p className="text-lg font-bold font-mono tracking-tight text-emerald-400">{results.length}</p>
+                          <p className="text-lg font-bold font-mono tracking-tight text-emerald-400">{results.length} 个</p>
                         </div>
                       </div>
                       <div className="flex gap-2">
@@ -1226,7 +1588,7 @@ export default function App() {
                           导出库位表
                         </button>
                         <button 
-                          onClick={() => { setData([]); setResults([]); setFileName(''); }}
+                          onClick={reset}
                           className="px-3 bg-slate-800 hover:bg-slate-700 text-slate-400 hover:text-white rounded-xl text-xs transition-colors"
                           title="置空当前库存数据"
                         >
@@ -1241,10 +1603,19 @@ export default function App() {
               {/* Card 2: Work Order -> Customer Relations Mapping */}
               <div className="bg-white p-6 rounded-3xl border border-slate-200 shadow-sm flex flex-col gap-4">
                 <div className="flex items-center justify-between pb-3 border-b border-slate-100">
-                  <h4 className="text-xs font-bold uppercase tracking-wider text-slate-500 flex items-center gap-2">
-                    <span className="w-5 h-5 rounded-full bg-violet-100 text-violet-600 flex items-center justify-center font-bold text-[10px]">2</span>
-                    工单与客户对照表
-                  </h4>
+                  <div className="flex items-center gap-2">
+                    <h4 className="text-xs font-bold uppercase tracking-wider text-slate-500 flex items-center gap-2">
+                      <span className="w-5 h-5 rounded-full bg-violet-100 text-violet-600 flex items-center justify-center font-bold text-[10px]">2</span>
+                      工单与客户对照表
+                    </h4>
+                    <button 
+                      onClick={downloadMappingTemplate} 
+                      className="text-[10px] text-violet-600 hover:text-violet-700 font-bold hover:underline transition-all flex items-center gap-0.5 ml-2 mr-auto"
+                      title="下载标准工单-客户对照表 Excel 范本模板"
+                    >
+                      (下载模本)
+                    </button>
+                  </div>
                   {mappingFileName && (
                     isSaved ? (
                       <span className="px-2 py-0.5 bg-emerald-50 text-emerald-600 rounded-full text-[9px] font-bold border border-emerald-100 flex items-center gap-1">
@@ -1259,25 +1630,56 @@ export default function App() {
                 </div>
 
                 {!mappingFileName ? (
-                  <motion.div 
-                    initial={{ opacity: 0, y: 10 }}
-                    animate={{ opacity: 1, y: 0 }}
-                    onDragOver={(e) => e.preventDefault()}
-                    onDrop={handleMappingDrop}
-                    className="p-8 rounded-2xl border-2 border-dashed border-slate-200 flex flex-col items-center justify-center text-center relative group hover:border-violet-500 hover:bg-violet-50/10 transition-all duration-300 min-h-[160px]"
-                  >
-                    <input 
-                      type="file" 
-                      accept=".xlsx,.xls" 
-                      onChange={handleMappingFileUpload}
-                      className="absolute inset-0 opacity-0 cursor-pointer z-10"
-                    />
-                    <div className="w-12 h-12 bg-violet-50 rounded-2xl flex items-center justify-center mb-4 text-violet-600 group-hover:scale-110 transition-transform">
-                      <Package className="w-6 h-6 animate-pulse" />
+                  <div className="flex flex-col gap-3">
+                    <motion.div 
+                      initial={{ opacity: 0, y: 10 }}
+                      animate={{ opacity: 1, y: 0 }}
+                      onDragOver={(e) => e.preventDefault()}
+                      onDrop={handleMappingDrop}
+                      className="p-8 rounded-2xl border-2 border-dashed border-slate-200 flex flex-col items-center justify-center text-center relative group hover:border-violet-500 hover:bg-violet-50/10 transition-all duration-300 min-h-[160px]"
+                    >
+                      <input 
+                        type="file" 
+                        accept=".xlsx,.xls" 
+                        onChange={handleMappingFileUpload}
+                        className="absolute inset-0 opacity-0 cursor-pointer z-10"
+                      />
+                      <div className="w-12 h-12 bg-violet-50 rounded-2xl flex items-center justify-center mb-4 text-violet-600 group-hover:scale-110 transition-transform">
+                        <Package className="w-6 h-6 animate-pulse" />
+                      </div>
+                      <h5 className="font-bold text-sm text-slate-800">拖拽工单-客户对照表此处</h5>
+                      <p className="text-[10px] text-slate-400 mt-1">建立库位销售单号/工单号与客户名称对应关系</p>
+                    </motion.div>
+
+                    <div className="bg-slate-50 border border-slate-100/80 rounded-2xl p-4 text-xs text-slate-600 space-y-3 shadow-inner">
+                      <div className="flex items-center justify-between">
+                        <p className="font-bold text-slate-700 flex items-center gap-1.5 text-[11px]">
+                          <FileText className="w-3.5 h-3.5 text-violet-500" />
+                          📊 对照表格式与匹配规范：
+                        </p>
+                        <button
+                          onClick={downloadMappingTemplate}
+                          className="text-[10px] bg-violet-100 hover:bg-violet-200 text-violet-700 font-bold px-2 py-0.5 rounded-lg transition-colors flex items-center gap-0.5 border border-violet-200/50"
+                        >
+                          <Download className="w-3 h-3" /> 下载标准模板.xlsx
+                        </button>
+                      </div>
+                      <div className="space-y-2 text-[11px] leading-relaxed text-slate-500">
+                        <p className="flex items-start gap-1">
+                          <span className="text-violet-500 font-bold mt-0.5 shrink-0">B</span>
+                          <span>核心匹配列一：Excel 工作簿内<strong>第 B 列（第二列）</strong>需为【工单号 / 销售单号】类型编码。</span>
+                        </p>
+                        <p className="flex items-start gap-1">
+                          <span className="text-violet-500 font-bold mt-0.5 shrink-0">F</span>
+                          <span>核心匹配列二：Excel 工作簿内<strong>第 F 列（第六列）</strong>需定义该销售单对应的【客户简称 / 名称】。</span>
+                        </p>
+                        <p className="flex items-start gap-1 text-[10px] text-slate-400">
+                          <span className="text-slate-300 font-bold mt-0.5 shrink-0">•</span>
+                          <span>兼容性：其它列（第 A, C, D, E 等）可以随意放置辅助统计信息或留空，均不会影响工单信息的翻译提取。若列位稍有歪斜，算法将自动根据首行表头自动校准。</span>
+                        </p>
+                      </div>
                     </div>
-                    <h5 className="font-bold text-sm text-slate-800">拖拽工单-客户对照表此处</h5>
-                    <p className="text-[10px] text-slate-400 mt-1">建立库存销售单号/工单号与客户名称对应关系</p>
-                  </motion.div>
+                  </div>
                 ) : (
                   <div className="bg-violet-950 rounded-2xl p-5 text-white shadow-md relative overflow-hidden flex flex-col gap-4">
                     <div className="absolute -right-6 -bottom-6 w-20 h-20 bg-white/5 rounded-full" />
@@ -1319,7 +1721,33 @@ export default function App() {
                           💾 确认保存至本地（后续免上传）
                         </button>
                       )}
-                      <div className="flex gap-2">
+
+                      <button 
+                        onClick={saveMappingToCloud}
+                        disabled={isCloudSaving}
+                        className={cn(
+                          "w-full flex items-center justify-center gap-1.5 font-bold py-2.5 rounded-xl text-xs transition-all border shadow-lg z-10",
+                          isCloudSynced 
+                            ? "bg-emerald-600 hover:bg-emerald-700 text-white border-emerald-500 hover:border-emerald-600"
+                            : "bg-indigo-600 hover:bg-indigo-700 text-white border-indigo-500 hover:border-indigo-600 active:scale-95"
+                        )}
+                      >
+                        {isCloudSaving ? (
+                          <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                        ) : isCloudSynced ? (
+                          <CheckCircle2 className="w-3.5 h-3.5 text-emerald-200" />
+                        ) : (
+                          <Cloud className="w-3.5 h-3.5 animate-bounce" />
+                        )}
+                        {isCloudSaving ? '正在发布至云端数据库...' : isCloudSynced ? '☁️ 已发布并存储在云端数据库' : '☁️ 存储发布至云端数据库（多终端共享）'}
+                      </button>
+                      {lastSyncedCloudTime && (
+                        <p className="text-[9px] text-violet-300 text-center font-mono">
+                          云端同步时间: {lastSyncedCloudTime}
+                        </p>
+                      )}
+
+                      <div className="flex gap-2 mt-1">
                         {customerStats.length > 0 && (
                           <button 
                             onClick={exportCustomerStatsToExcel}
@@ -1340,6 +1768,85 @@ export default function App() {
                     </div>
                   </div>
                 )}
+
+                {/* 云端数据源库 - 支持其他终端或浏览器一键同步与备份下载 */}
+                <div className="mt-4 pt-4 border-t border-slate-100">
+                  <div className="flex items-center justify-between mb-3">
+                    <div className="flex items-center gap-1.5">
+                      <Cloud className="w-3.5 h-3.5 text-indigo-500" />
+                      <p className="text-[11px] font-bold text-slate-500 uppercase tracking-wider">
+                        云端共享对照模型库 ({cloudMappings.length})
+                      </p>
+                    </div>
+                    <button 
+                      onClick={() => fetchCloudMappings(false)} 
+                      className="text-slate-400 hover:text-slate-600 transition-colors p-1 rounded-lg"
+                      title="手动拉取云端最新纪录"
+                    >
+                      <RefreshCw className={cn("w-3.5 h-3.5", isCloudLoading && "animate-spin")} />
+                    </button>
+                  </div>
+
+                  {isCloudLoading && cloudMappings.length === 0 ? (
+                    <div className="py-4 text-center text-xs text-slate-400 flex items-center justify-center gap-2">
+                      <Loader2 className="w-3.5 h-3.5 animate-spin text-indigo-500" />
+                      正在极速拉取云端名录...
+                    </div>
+                  ) : cloudMappings.length === 0 ? (
+                    <div className="py-4 text-center text-[11px] text-slate-400 bg-slate-50/50 rounded-2xl border border-dashed border-slate-100">
+                      ☁️ 尚无任何云端共享对照。请在上方导入本地 Excel 字典，点击“发布至云端数据库”实现全网多客户端同步共享。
+                    </div>
+                  ) : (
+                    <div className="space-y-2 max-h-[180px] overflow-y-auto pr-1 select-none">
+                      {cloudMappings.map((item) => (
+                        <div 
+                          key={item.id} 
+                          className={cn(
+                            "group p-2.5 rounded-xl border transition-all text-[11px] flex items-center justify-between gap-2",
+                            mappingFileName === item.mappingFileName 
+                              ? "bg-indigo-50/40 border-indigo-200" 
+                              : "bg-slate-50/60 hover:bg-slate-50 border-slate-100 hover:border-slate-200"
+                          )}
+                        >
+                          <div className="min-w-0 flex-1">
+                            <div className="flex items-center gap-1.5">
+                              <span className="font-bold text-slate-700 truncate block max-w-[130px]" title={item.mappingFileName}>
+                                {item.mappingFileName}
+                              </span>
+                              {mappingFileName === item.mappingFileName && (
+                                <span className="text-[8px] bg-indigo-100 text-indigo-700 px-1 py-0.2 rounded font-bold shrink-0">
+                                  当前装载
+                                </span>
+                              )}
+                            </div>
+                            <div className="text-[10px] text-slate-400 mt-0.5 flex items-center gap-1 font-mono">
+                              <span>规则: <b>{item.count}</b> 条</span>
+                              <span>•</span>
+                              <span>{item.updatedAt ? new Date(item.updatedAt).toLocaleDateString() : '未知'}</span>
+                            </div>
+                          </div>
+
+                          <div className="flex items-center gap-1 shrink-0">
+                            <button
+                              onClick={() => applyCloudMapping(item)}
+                              className="px-2 py-1 bg-white hover:bg-indigo-50 text-indigo-600 hover:text-indigo-700 rounded-lg border border-slate-200 hover:border-indigo-200 font-bold text-[10px] transition-all duration-200 hover:shadow-sm"
+                              title="应用此云端模板数据到分析"
+                            >
+                              一键导入
+                            </button>
+                            <button
+                              onClick={() => downloadCloudMappingAsExcel(item)}
+                              className="p-1 px-1.5 bg-white hover:bg-amber-50 text-amber-600 hover:text-amber-700 rounded-lg border border-slate-200 hover:border-amber-200 text-[10px] transition-all duration-200"
+                              title="下载此云端模组的 Excel 对照源表"
+                            >
+                              <CloudDownload className="w-3.5 h-3.5" />
+                            </button>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
               </div>
 
               {/* Requirements Guidelines */}
