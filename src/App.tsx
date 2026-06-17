@@ -1198,17 +1198,23 @@ export default function App() {
     const worksheet = workbook.addWorksheet('混档异常明细');
 
     worksheet.columns = [
-      { header: '异常库位', key: 'location', width: 20 },
-      { header: '功率档', key: 'power', width: 15 },
-      { header: '包含箱号', key: 'boxes', width: 80 }
+      { header: '异常库位', key: 'location', width: 18 },
+      { header: '库位分析总箱数 (箱)', key: 'totalCount', width: 24 },
+      { header: '功率档标签', key: 'power', width: 18 },
+      { header: '当前档箱数 (箱)', key: 'powerCount', width: 20 },
+      { header: '包含箱号明细', key: 'boxes', width: 85 }
     ];
 
     mixedPowerAlerts.forEach((alert) => {
+      const totalBoxesInLoc = Object.values(alert.powerDetails).reduce((acc: number, bList) => acc + (bList as string[]).length, 0);
       Object.entries(alert.powerDetails).forEach(([power, boxes]) => {
+        const boxesTyped = boxes as string[];
         const excelRow = worksheet.addRow({
           location: alert.location,
+          totalCount: totalBoxesInLoc,
           power: power,
-          boxes: (boxes as string[]).join(', ')
+          powerCount: boxesTyped.length,
+          boxes: boxesTyped.join(', ')
         });
 
         // 样式设置
@@ -1216,6 +1222,11 @@ export default function App() {
           cell.font = { color: { argb: 'FFEF4444' } }; // 红色字体
           cell.alignment = { vertical: 'middle', horizontal: 'left', wrapText: true };
         });
+
+        excelRow.getCell('location').alignment = { vertical: 'middle', horizontal: 'center' };
+        excelRow.getCell('totalCount').alignment = { vertical: 'middle', horizontal: 'right' };
+        excelRow.getCell('power').alignment = { vertical: 'middle', horizontal: 'center' };
+        excelRow.getCell('powerCount').alignment = { vertical: 'middle', horizontal: 'right' };
       });
       // 插入一个空行作为分隔
       worksheet.addRow({});
@@ -1242,17 +1253,22 @@ export default function App() {
     const worksheet = workbook.addWorksheet('客户混载明细');
 
     worksheet.columns = [
-      { header: '库位名称', key: 'location', width: 20 },
-      { header: '客户名称', key: 'customer', width: 30 },
-      { header: '包含箱号', key: 'boxes', width: 80 }
+      { header: '库位名称', key: 'location', width: 18 },
+      { header: '库位分析总箱数 (箱)', key: 'totalCount', width: 24 },
+      { header: '客户名称', key: 'customer', width: 32 },
+      { header: '该客户箱数 (箱)', key: 'customerCount', width: 20 },
+      { header: '包含箱号明细', key: 'boxes', width: 85 }
     ];
 
     mixedCustomerAlerts.forEach((alert) => {
+      const totalBoxesInLoc = Object.values(alert.customerDetails).reduce((acc: number, bList) => acc + (bList as any[]).length, 0);
       Object.entries(alert.customerDetails).forEach(([customer, boxes]) => {
         const boxesTyped = boxes as { boxNo: string; power: string }[];
         const excelRow = worksheet.addRow({
           location: alert.location,
+          totalCount: totalBoxesInLoc,
           customer: customer,
+          customerCount: boxesTyped.length,
           boxes: boxesTyped.map(b => `${b.boxNo} (${b.power})`).join(', ')
         });
 
@@ -1260,6 +1276,11 @@ export default function App() {
           cell.font = { color: { argb: 'FF2563EB' } }; // 蓝色字体
           cell.alignment = { vertical: 'middle', horizontal: 'left', wrapText: true };
         });
+
+        excelRow.getCell('location').alignment = { vertical: 'middle', horizontal: 'center' };
+        excelRow.getCell('totalCount').alignment = { vertical: 'middle', horizontal: 'right' };
+        excelRow.getCell('customer').alignment = { vertical: 'middle', horizontal: 'left' };
+        excelRow.getCell('customerCount').alignment = { vertical: 'middle', horizontal: 'right' };
       });
       worksheet.addRow({});
     });
