@@ -696,8 +696,6 @@ export default function App() {
             continue;
           }
 
-          let powerIdx = headers.findIndex(h => h.includes('功率'));
-          const powerVal = powerIdx !== -1 ? rowArr[powerIdx] : undefined;
 
           parsedData.push({
             '箱号': boxVal,
