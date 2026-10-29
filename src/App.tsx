@@ -679,8 +679,6 @@ export default function App() {
           if (!isGradeA) {
             nonAGradeCountLocal++;
             const cat = getNormalizedGradeCategory(gradeVal);
-            let powerIdx = headers.findIndex(h => h.includes('功率'));
-            const powerVal = powerIdx !== -1 ? rowArr[powerIdx] : undefined;
 
             nonAGradeListLocal.push({
               boxNo: boxVal || `BOX-${i}`,
@@ -695,7 +693,6 @@ export default function App() {
             });
             continue;
           }
-
 
           parsedData.push({
             '箱号': boxVal,
@@ -1293,37 +1290,35 @@ export default function App() {
   const downloadMappingTemplate = async () => {
     try {
       const workbook = new ExcelJS.Workbook();
-      const worksheet = workbook.addWorksheet('工单与客户关系对照表');
+      const worksheet = workbook.addWorksheet('Mapping Template (对照表)');
 
       // Add columns
       worksheet.columns = [
-        { header: '序号 (可留空)', key: 'seq', width: 12 },
-        { header: '工单号 / 销售单号 (必填-列B)', key: 'orderNo', width: 28 },
-        { header: '辅助信息列1 (可留空)', key: 'remark1', width: 22 },
-        { header: '辅助信息列2 (可留空)', key: 'remark2', width: 22 },
-        { header: '辅助信息列3 (可留空)', key: 'remark3', width: 22 },
-        { header: '客户简称 / 客户名称 (必填-列F)', key: 'customerName', width: 32 },
+        { header: 'No. (序号)', key: 'seq', width: 12 },
+        { header: 'Order / Sales No. (工单/销售单号-Col B)', key: 'orderNo', width: 32 },
+        { header: 'Extra Col 1 (辅助列1)', key: 'remark1', width: 20 },
+        { header: 'Extra Col 2 (辅助列2)', key: 'remark2', width: 20 },
+        { header: 'Extra Col 3 (辅助列3)', key: 'remark3', width: 20 },
+        { header: 'Customer Name (客户名称-Col F)', key: 'customerName', width: 30 },
       ];
 
-      // Enable grid lines
       worksheet.views = [{ showGridLines: true }];
 
-      // Style header row
       const headerRow = worksheet.getRow(1);
       headerRow.height = 30;
       headerRow.eachCell((cell, colNumber) => {
-        cell.font = { name: '微软雅黑', size: 10, bold: true, color: { argb: 'FFFFFF' } };
+        cell.font = { name: 'Arial', size: 10, bold: true, color: { argb: 'FFFFFF' } };
         if (colNumber === 2 || colNumber === 6) {
           cell.fill = {
             type: 'pattern',
             pattern: 'solid',
-            fgColor: { argb: '7C3AED' } // Violet color for active columns
+            fgColor: { argb: '7C3AED' }
           };
         } else {
           cell.fill = {
             type: 'pattern',
             pattern: 'solid',
-            fgColor: { argb: '475569' } // Slate color for decorative columns
+            fgColor: { argb: '475569' }
           };
         }
         cell.alignment = { horizontal: 'center', vertical: 'middle' };
@@ -1335,12 +1330,10 @@ export default function App() {
         };
       });
 
-      // Sample data rows
       const samples = [
-        { seq: '1', orderNo: 'WO-2026001', remark1: '示例数据-销售单A', remark2: '', remark3: '', customerName: '华能电力' },
-        { seq: '2', orderNo: 'WO-2026002', remark1: '示例数据-销售单B', remark2: '', remark3: '', customerName: '中广核' },
-        { seq: '3', orderNo: 'WO-2026003', remark1: '示例数据-销售单C', remark2: '', remark3: '', customerName: '大唐集团' },
-        { seq: '4', orderNo: 'WO-2026004', remark1: '示例数据-销售单D', remark2: '', remark3: '', customerName: '国家电投' }
+        { seq: '1', orderNo: 'WO-2026001', remark1: 'Demo-A', remark2: '', remark3: '', customerName: 'Client-Alpha' },
+        { seq: '2', orderNo: 'WO-2026002', remark1: 'Demo-B', remark2: '', remark3: '', customerName: 'Client-Beta' },
+        { seq: '3', orderNo: 'WO-2026003', remark1: 'Demo-C', remark2: '', remark3: '', customerName: 'Client-Gamma' },
       ];
 
       samples.forEach((sample) => {
@@ -1354,13 +1347,13 @@ export default function App() {
         });
         row.height = 22;
         row.eachCell((cell, colNumber) => {
-          cell.font = { name: '微软雅黑', size: 10 };
+          cell.font = { name: 'Arial', size: 9 };
           cell.alignment = { horizontal: colNumber === 2 || colNumber === 6 ? 'left' : 'center', vertical: 'middle' };
           if (colNumber === 2 || colNumber === 6) {
             cell.fill = {
               type: 'pattern',
               pattern: 'solid',
-              fgColor: { argb: 'F5F3FF' } // light violet highlight
+              fgColor: { argb: 'F5F3FF' }
             };
           }
           cell.border = {
@@ -1372,41 +1365,36 @@ export default function App() {
         });
       });
 
-      // Spacer and notes
       worksheet.addRow([]);
-      const rHeader = worksheet.addRow(['⚠️ 对照表格式说明及自动解析规则：']);
-      rHeader.getCell(1).font = { name: '微软雅黑', size: 10, bold: true, color: { argb: '7C3AED' } };
+      const rHeader = worksheet.addRow(['Notes / 规范说明:']);
+      rHeader.getCell(1).font = { name: 'Arial', size: 10, bold: true, color: { argb: '7C3AED' } };
 
       const notes = [
-        '1. 【核心解析列】：程序默认自动扫描 Excel 工作表中的 [第 B 列 (B)] 作为工单号或销售单号，以及 [第 F 列 (F)] 作为对应的客户简称。',
-        '2. 【表头智能模糊识别】：首行的标题若模糊匹配 “工单”、“销售单”、“客户简称” 或 “客户”，程序将自适应该列。如果是标准表头，首行将不导入。',
-        '3. 【多列自由扩展】：除列 B、列 F 两个主映射字段外，其他列 (如 A, C, D, E 等) 您可以放任意辅助文字信息或保持空白，不会打乱正常的数据映射加载。',
-        '4. 【免重复上传】：关联对照表上传并展现关联词组数目后，请务必点击卡片下方的【确认保存至本地（后续免上传）】按钮。数据将牢固存储于您的浏览器内部存储中，今后再上传新库存表格，均会自动翻译转换。'
+        '1. Column B: Order No. / Sales No. (工单/销售单号)',
+        '2. Column F: Customer Name (客户简称/名称)',
+        '3. Other columns (A, C, D, E) are optional and ignored (其余列可选，不影响匹配)'
       ];
 
       notes.forEach(note => {
         const r = worksheet.addRow([note]);
-        r.getCell(1).font = { name: '微软雅黑', size: 9, color: { argb: '475569' } };
+        r.getCell(1).font = { name: 'Arial', size: 9, color: { argb: '475569' } };
       });
 
       const buffer = await workbook.xlsx.writeBuffer();
       const blob = new Blob([buffer], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
-      saveAs(blob, '工单与客户关系对照表_标准模板.xlsx');
+      saveAs(blob, 'Order_Customer_Template.xlsx');
 
-      setSaveSuccess('工单客户对照表标准模板已下载成功！');
-      setTimeout(() => {
-        setSaveSuccess(null);
-      }, 4000);
+      setSaveSuccess('Template downloaded: Order_Customer_Template.xlsx');
+      setTimeout(() => setSaveSuccess(null), 3000);
     } catch (e) {
       console.error(e);
-      setError('模板生成失败，请刷新页面或者重试');
+      setError('Failed to generate template / 模板生成失败');
     }
   };
 
   const exportToExcel = async () => {
     if (results.length === 0) return;
     
-    // 找出所有存在于结果中的唯一客户名称
     const uniqueCustomersSet = new Set<string>();
     results.forEach((row) => {
       const dist = row['客户分布'];
@@ -1421,35 +1409,31 @@ export default function App() {
     const uniqueCustomers = Array.from(uniqueCustomersSet).sort();
 
     const workbook = new ExcelJS.Workbook();
-    const worksheet = workbook.addWorksheet('库位统计分析');
+    const worksheet = workbook.addWorksheet('Location Summary (库位统计)');
 
-    // 1. 定义基础列
     const baseColumns = [
-      { header: '库位名称', key: 'location', width: 20 },
-      { header: '大部分存放的客户名称和功率', key: 'dominantAttr', width: 35 },
-      { header: '箱号数量', key: 'count', width: 15 },
-      { header: '可入库数量 (标准18)', key: 'available', width: 25 },
+      { header: 'Location (库位)', key: 'location', width: 18 },
+      { header: 'Dominant Cust & Power (主存客户/功率)', key: 'dominantAttr', width: 34 },
+      { header: 'Box Qty (箱数)', key: 'count', width: 14 },
+      { header: 'Avail Cap (可入容量)', key: 'available', width: 18 },
     ];
 
-    // 2. 为每个客户动态追加一列
     const customerColumns = uniqueCustomers.map(cust => ({
-      header: `${cust} (箱数)`,
+      header: `${cust} (Qty)`,
       key: `cust_${cust}`,
-      width: Math.max(16, cust.length * 2 + 5)
+      width: Math.max(14, cust.length * 2 + 4)
     }));
 
     worksheet.columns = [...baseColumns, ...customerColumns];
 
-    // 添加数据并设置样式
     results.forEach((row) => {
       const rowData: Record<string, any> = {
         location: row['库位名称'],
-        dominantAttr: row['主存客户'] !== '空置' ? `${row['主存客户']} (${row['主存功率']})` : '空置',
+        dominantAttr: row['主存客户'] !== '空置' ? `${row['主存客户']} (${row['主存功率']})` : 'Empty (空置)',
         count: row['箱号数量'],
         available: row['可入库数量'],
       };
 
-      // 填充每列客户对应的箱子数量，为 0 的则填 0，以方便用户做和值计算
       uniqueCustomers.forEach((cust) => {
         const dist = row['客户分布'] || {};
         rowData[`cust_${cust}`] = dist[cust] || 0;
@@ -1459,29 +1443,26 @@ export default function App() {
 
       const count = row['箱号数量'];
       const cap = row['库位名称'].toUpperCase().startsWith('H') ? 14 : 18;
-      let color = 'FF0F172A'; // 默认：黑色 (Slate 900)
+      let color = 'FF0F172A';
       
       if (count > cap) {
-        color = 'FFEF4444'; // 红色 (Red 500)
+        color = 'FFEF4444';
       } else if (count < cap) {
-        color = 'FF10B981'; // 绿色 (Emerald 500)
+        color = 'FF10B981';
       }
 
-      // 为整行应用颜色
       excelRow.eachCell((cell) => {
-        cell.font = { color: { argb: color }, bold: true };
+        cell.font = { name: 'Arial', color: { argb: color }, bold: true, size: 10 };
         cell.alignment = { vertical: 'middle', horizontal: 'center' };
       });
-      // 库位名称与大部分存放的属性左对齐
       excelRow.getCell('location').alignment = { vertical: 'middle', horizontal: 'left' };
       excelRow.getCell('dominantAttr').alignment = { vertical: 'middle', horizontal: 'left' };
     });
 
-    // 表头样式
     const headerRow = worksheet.getRow(1);
     headerRow.height = 30;
     headerRow.eachCell((cell) => {
-      cell.font = { bold: true, color: { argb: 'FFFFFFFF' }, size: 12 };
+      cell.font = { name: 'Arial', bold: true, color: { argb: 'FFFFFFFF' }, size: 11 };
       cell.fill = {
         type: 'pattern',
         pattern: 'solid',
@@ -1490,24 +1471,23 @@ export default function App() {
       cell.alignment = { vertical: 'middle', horizontal: 'center' };
     });
 
-    // 写入文件
     const buffer = await workbook.xlsx.writeBuffer();
     const blob = new Blob([buffer], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
-    saveAs(blob, `库位统计分析_${new Date().toISOString().split('T')[0]}.xlsx`);
+    saveAs(blob, `Location_Analysis_${new Date().toISOString().split('T')[0]}.xlsx`);
   };
 
   const exportAlertsToExcel = async () => {
     if (mixedPowerAlerts.length === 0) return;
 
     const workbook = new ExcelJS.Workbook();
-    const worksheet = workbook.addWorksheet('混档异常明细');
+    const worksheet = workbook.addWorksheet('Mixed Power Alerts (混档异常)');
 
     worksheet.columns = [
-      { header: '异常库位', key: 'location', width: 18 },
-      { header: '库位分析总箱数 (箱)', key: 'totalCount', width: 24 },
-      { header: '功率档标签', key: 'power', width: 18 },
-      { header: '当前档箱数 (箱)', key: 'powerCount', width: 20 },
-      { header: '包含箱号明细', key: 'boxes', width: 85 }
+      { header: 'Location (库位)', key: 'location', width: 16 },
+      { header: 'Total Boxes (总箱数)', key: 'totalCount', width: 18 },
+      { header: 'Power Class (功率档)', key: 'power', width: 18 },
+      { header: 'Box Qty (箱数)', key: 'powerCount', width: 16 },
+      { header: 'Box Numbers (箱号明细)', key: 'boxes', width: 75 }
     ];
 
     mixedPowerAlerts.forEach((alert) => {
@@ -1522,9 +1502,8 @@ export default function App() {
           boxes: boxesTyped.join(', ')
         });
 
-        // 样式设置
         excelRow.eachCell((cell) => {
-          cell.font = { color: { argb: 'FFEF4444' } }; // 红色字体
+          cell.font = { name: 'Arial', color: { argb: 'FFEF4444' }, size: 9 };
           cell.alignment = { vertical: 'middle', horizontal: 'left', wrapText: true };
         });
 
@@ -1533,36 +1512,34 @@ export default function App() {
         excelRow.getCell('power').alignment = { vertical: 'middle', horizontal: 'center' };
         excelRow.getCell('powerCount').alignment = { vertical: 'middle', horizontal: 'right' };
       });
-      // 插入一个空行作为分隔
       worksheet.addRow({});
     });
 
-    // 表头样式
     const headerRow = worksheet.getRow(1);
     headerRow.height = 30;
     headerRow.eachCell((cell) => {
-      cell.font = { bold: true, color: { argb: 'FFFFFFFF' } };
+      cell.font = { name: 'Arial', bold: true, color: { argb: 'FFFFFFFF' }, size: 10 };
       cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFEF4444' } };
       cell.alignment = { vertical: 'middle', horizontal: 'center' };
     });
 
     const buffer = await workbook.xlsx.writeBuffer();
     const blob = new Blob([buffer], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
-    saveAs(blob, `库存混档异常报告_${new Date().toISOString().split('T')[0]}.xlsx`);
+    saveAs(blob, `Mixed_Power_Alerts_${new Date().toISOString().split('T')[0]}.xlsx`);
   };
 
   const exportCustomerAlertsToExcel = async () => {
     if (mixedCustomerAlerts.length === 0) return;
 
     const workbook = new ExcelJS.Workbook();
-    const worksheet = workbook.addWorksheet('客户混载明细');
+    const worksheet = workbook.addWorksheet('Mixed Customer (客户混载)');
 
     worksheet.columns = [
-      { header: '库位名称', key: 'location', width: 18 },
-      { header: '库位分析总箱数 (箱)', key: 'totalCount', width: 24 },
-      { header: '客户名称', key: 'customer', width: 32 },
-      { header: '该客户箱数 (箱)', key: 'customerCount', width: 20 },
-      { header: '包含箱号明细', key: 'boxes', width: 85 }
+      { header: 'Location (库位)', key: 'location', width: 16 },
+      { header: 'Total Boxes (总箱数)', key: 'totalCount', width: 18 },
+      { header: 'Customer (客户名称)', key: 'customer', width: 28 },
+      { header: 'Box Qty (箱数)', key: 'customerCount', width: 16 },
+      { header: 'Box Numbers (箱号明细)', key: 'boxes', width: 75 }
     ];
 
     mixedCustomerAlerts.forEach((alert) => {
@@ -1578,7 +1555,7 @@ export default function App() {
         });
 
         excelRow.eachCell((cell) => {
-          cell.font = { color: { argb: 'FF2563EB' } }; // 蓝色字体
+          cell.font = { name: 'Arial', color: { argb: 'FF2563EB' }, size: 9 };
           cell.alignment = { vertical: 'middle', horizontal: 'left', wrapText: true };
         });
 
@@ -1593,26 +1570,26 @@ export default function App() {
     const headerRow = worksheet.getRow(1);
     headerRow.height = 30;
     headerRow.eachCell((cell) => {
-      cell.font = { bold: true, color: { argb: 'FFFFFFFF' } };
+      cell.font = { name: 'Arial', bold: true, color: { argb: 'FFFFFFFF' }, size: 10 };
       cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FF2563EB' } };
       cell.alignment = { vertical: 'middle', horizontal: 'center' };
     });
 
     const buffer = await workbook.xlsx.writeBuffer();
     const blob = new Blob([buffer], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
-    saveAs(blob, `客户混载预警报告_${new Date().toISOString().split('T')[0]}.xlsx`);
+    saveAs(blob, `Mixed_Customer_Alerts_${new Date().toISOString().split('T')[0]}.xlsx`);
   };
 
   const exportCustomerStatsToExcel = async () => {
     if (customerStats.length === 0) return;
 
     const workbook = new ExcelJS.Workbook();
-    const worksheet = workbook.addWorksheet('客户库存数量统计');
+    const worksheet = workbook.addWorksheet('Customer Stats (客户统计)');
 
     worksheet.columns = [
-      { header: '顺序', key: 'index', width: 12 },
-      { header: '客户名称', key: 'customerName', width: 45 },
-      { header: '占箱数量 (箱)', key: 'boxCount', width: 25 }
+      { header: 'No. (序号)', key: 'index', width: 12 },
+      { header: 'Customer (客户名称)', key: 'customerName', width: 38 },
+      { header: 'Box Qty (箱数)', key: 'boxCount', width: 20 }
     ];
 
     customerStats.forEach((stat, i) => {
@@ -1623,7 +1600,7 @@ export default function App() {
       });
 
       excelRow.eachCell((cell) => {
-        cell.font = { color: { argb: 'FF5B21B6' } }; // 紫色
+        cell.font = { name: 'Arial', color: { argb: 'FF5B21B6' }, size: 10 };
         cell.alignment = { vertical: 'middle', horizontal: 'left' };
       });
       excelRow.getCell('index').alignment = { vertical: 'middle', horizontal: 'center' };
@@ -1633,33 +1610,33 @@ export default function App() {
     const headerRow = worksheet.getRow(1);
     headerRow.height = 30;
     headerRow.eachCell((cell) => {
-      cell.font = { bold: true, color: { argb: 'FFFFFFFF' } };
-      cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FF7C3AED' } }; // 优雅紫
+      cell.font = { name: 'Arial', bold: true, color: { argb: 'FFFFFFFF' }, size: 10 };
+      cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FF7C3AED' } };
       cell.alignment = { vertical: 'middle', horizontal: 'center' };
     });
 
     const buffer = await workbook.xlsx.writeBuffer();
     const blob = new Blob([buffer], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
-    saveAs(blob, `客户库存清单报告_${new Date().toISOString().split('T')[0]}.xlsx`);
+    saveAs(blob, `Customer_Inventory_Stats_${new Date().toISOString().split('T')[0]}.xlsx`);
   };
 
   const exportCorrectionToExcel = async () => {
     if (relocationSuggestions.length === 0) return;
 
     const workbook = new ExcelJS.Workbook();
-    const worksheet = workbook.addWorksheet('重组与偏差修正建议');
+    const worksheet = workbook.addWorksheet('Relocation Plan (纠偏建议)');
 
     worksheet.columns = [
-      { header: '顺序', key: 'index', width: 10 },
-      { header: '不一致箱号', key: 'boxNo', width: 22 },
-      { header: '当前位置', key: 'currentLoc', width: 18 },
-      { header: '偏差类型', key: 'mismatchType', width: 18 },
-      { header: '当前客户', key: 'customerName', width: 25 },
-      { header: '当前功率档', key: 'powerGrade', width: 15 },
-      { header: '主存客户', key: 'dominantCustomer', width: 25 },
-      { header: '主存功率', key: 'dominantPower', width: 15 },
-      { header: '推荐迁移位置', key: 'recommendedLoc', width: 20 },
-      { header: '最优规整及推荐原因说明', key: 'recommendationReason', width: 68 }
+      { header: 'No. (序号)', key: 'index', width: 10 },
+      { header: 'Box No. (箱号)', key: 'boxNo', width: 22 },
+      { header: 'Current Loc (当前库位)', key: 'currentLoc', width: 18 },
+      { header: 'Mismatch (偏差类型)', key: 'mismatchType', width: 18 },
+      { header: 'Customer (客户)', key: 'customerName', width: 24 },
+      { header: 'Power (功率档)', key: 'powerGrade', width: 15 },
+      { header: 'Dominant Cust (主存客户)', key: 'dominantCustomer', width: 24 },
+      { header: 'Dominant Power (主存功率)', key: 'dominantPower', width: 16 },
+      { header: 'Target Loc (推荐库位)', key: 'recommendedLoc', width: 18 },
+      { header: 'Reason (调整说明)', key: 'recommendationReason', width: 55 }
     ];
 
     relocationSuggestions.forEach((s, i) => {
@@ -1678,11 +1655,11 @@ export default function App() {
 
       excelRow.eachCell((cell, colNumber) => {
         if (colNumber === 4) {
-          cell.font = { color: { argb: 'FFEF4444' }, bold: true }; // Red text for warning
+          cell.font = { name: 'Arial', color: { argb: 'FFEF4444' }, bold: true, size: 9 };
         } else if (colNumber === 9) {
-          cell.font = { color: { argb: 'FF10B981' }, bold: true }; // Green text for suggestion
+          cell.font = { name: 'Arial', color: { argb: 'FF10B981' }, bold: true, size: 9 };
         } else {
-          cell.font = { color: { argb: 'FF1E293B' } };
+          cell.font = { name: 'Arial', color: { argb: 'FF1E293B' }, size: 9 };
         }
         cell.alignment = { vertical: 'middle', horizontal: (colNumber === 1 || colNumber === 3 || colNumber === 9) ? 'center' : 'left' };
       });
@@ -1691,37 +1668,36 @@ export default function App() {
     const headerRow = worksheet.getRow(1);
     headerRow.height = 30;
     headerRow.eachCell((cell) => {
-      cell.font = { bold: true, color: { argb: 'FFFFFFFF' } };
-      cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FF2563EB' } }; // Royal Blue header
+      cell.font = { name: 'Arial', bold: true, color: { argb: 'FFFFFFFF' }, size: 10 };
+      cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FF2563EB' } };
       cell.alignment = { vertical: 'middle', horizontal: 'center' };
     });
 
     const buffer = await workbook.xlsx.writeBuffer();
     const blob = new Blob([buffer], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
-    saveAs(blob, `库位箱子重组纠偏建议报告_${new Date().toISOString().split('T')[0]}.xlsx`);
+    saveAs(blob, `Relocation_Suggestions_${new Date().toISOString().split('T')[0]}.xlsx`);
   };
 
   const exportNonAGradeToExcel = async () => {
     if (nonAGradeList.length === 0) {
-      setError('暂无可导出的非A级别品（B、F、R）数据');
+      setError('No Non-A Grade data to export / 暂无可导出的非A级品数据');
       return;
     }
 
     try {
       const workbook = new ExcelJS.Workbook();
       
-      // Sheet 1: 非A级品统计汇总
-      const summarySheet = workbook.addWorksheet('非A级品统计汇总');
+      // Sheet 1: Non-A Summary
+      const summarySheet = workbook.addWorksheet('Summary (汇总)');
       
       const bItems = nonAGradeList.filter(x => x.grade === 'B');
       const fItems = nonAGradeList.filter(x => x.grade === 'F');
       const rItems = nonAGradeList.filter(x => x.grade === 'R');
       const otherItems = nonAGradeList.filter(x => !['B', 'F', 'R'].includes(x.grade));
 
-      // 按库位统计非A级品分布
       const locMap: Record<string, { b: number; f: number; r: number; other: number; total: number; customers: Set<string> }> = {};
       nonAGradeList.forEach(item => {
-        const loc = item.location || '未知库位';
+        const loc = item.location || 'Unknown';
         if (!locMap[loc]) {
           locMap[loc] = { b: 0, f: 0, r: 0, other: 0, total: 0, customers: new Set() };
         }
@@ -1737,40 +1713,39 @@ export default function App() {
 
       const sortedLocs = Object.keys(locMap).sort(compareLocations);
 
-      // 列宽预设
       summarySheet.columns = [
         { width: 16 },
-        { width: 18 },
         { width: 16 },
-        { width: 22 },
-        { width: 35 }
+        { width: 16 },
+        { width: 18 },
+        { width: 32 }
       ];
 
-      // 标题
-      const titleRow = summarySheet.addRow(['非A级别品 (B / F / R) 库存统计分析报表']);
-      titleRow.font = { name: '微软雅黑', size: 14, bold: true, color: { argb: 'FFFFFFFF' } };
-      titleRow.height = 34;
+      // Title
+      const titleRow = summarySheet.addRow(['Non-A Grade Inventory Summary (非A级品库存统计)']);
+      titleRow.font = { name: 'Arial', size: 13, bold: true, color: { argb: 'FFFFFFFF' } };
+      titleRow.height = 32;
       summarySheet.mergeCells('A1:E1');
       titleRow.getCell(1).fill = {
         type: 'pattern',
         pattern: 'solid',
-        fgColor: { argb: 'FF6B21A8' } // 优雅深紫色
+        fgColor: { argb: 'FF6B21A8' }
       };
       titleRow.getCell(1).alignment = { vertical: 'middle', horizontal: 'center' };
 
       summarySheet.addRow([]);
 
-      // 统计概要卡片行
+      // Stats KPI row
       const statsRow = summarySheet.addRow([
-        `非A级总箱数: ${nonAGradeList.length} 箱`,
-        `B 级品: ${bItems.length} 箱`,
-        `F 级品: ${fItems.length} 箱`,
-        `R 级品: ${rItems.length} 箱`,
-        `涉及库位: ${sortedLocs.length} 个`
+        `Total Non-A: ${nonAGradeList.length}`,
+        `Grade B: ${bItems.length}`,
+        `Grade F: ${fItems.length}`,
+        `Grade R: ${rItems.length}`,
+        `Locations: ${sortedLocs.length}`
       ]);
       statsRow.height = 26;
       statsRow.eachCell(cell => {
-        cell.font = { name: '微软雅黑', size: 10, bold: true, color: { argb: 'FF334155' } };
+        cell.font = { name: 'Arial', size: 10, bold: true, color: { argb: 'FF334155' } };
         cell.alignment = { vertical: 'middle', horizontal: 'center' };
         cell.fill = {
           type: 'pattern',
@@ -1787,27 +1762,27 @@ export default function App() {
 
       summarySheet.addRow([]);
 
-      // 一、按等级分类汇总
-      const sec1 = summarySheet.addRow(['一、等级分类汇总（来源于K列箱等级）']);
-      sec1.font = { name: '微软雅黑', size: 11, bold: true, color: { argb: 'FF6B21A8' } };
+      // Section 1: By Grade
+      const sec1 = summarySheet.addRow(['1. Breakdown by Grade / 等级分类统计 (Col K)']);
+      sec1.font = { name: 'Arial', size: 10, bold: true, color: { argb: 'FF6B21A8' } };
 
-      const hGrade = summarySheet.addRow(['等级分类 (K列)', '箱数 (箱)', '占非A级比例', '涉及库位数', '说明']);
+      const hGrade = summarySheet.addRow(['Grade (等级)', 'Box Qty (箱数)', 'Share (占比)', 'Locs (库位数)', 'Notes (说明)']);
       hGrade.height = 24;
       hGrade.eachCell(cell => {
-        cell.font = { name: '微软雅黑', size: 10, bold: true, color: { argb: 'FFFFFFFF' } };
+        cell.font = { name: 'Arial', size: 10, bold: true, color: { argb: 'FFFFFFFF' } };
         cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FF475569' } };
         cell.alignment = { vertical: 'middle', horizontal: 'center' };
       });
 
       const totalNonA = nonAGradeList.length || 1;
       const gradeRowsData = [
-        { name: 'B 级品', count: bItems.length, locs: new Set(bItems.map(x => x.location)).size, note: 'B级品 / 次品' },
-        { name: 'F 级品', count: fItems.length, locs: new Set(fItems.map(x => x.location)).size, note: 'F级品 / 返工待定品' },
-        { name: 'R 级品', count: rItems.length, locs: new Set(rItems.map(x => x.location)).size, note: 'R级品 / 维修退货品' },
+        { name: 'Grade B (B级品)', count: bItems.length, locs: new Set(bItems.map(x => x.location)).size, note: 'B-Grade / Substandard' },
+        { name: 'Grade F (F级品)', count: fItems.length, locs: new Set(fItems.map(x => x.location)).size, note: 'F-Grade / Pending Rework' },
+        { name: 'Grade R (R级品)', count: rItems.length, locs: new Set(rItems.map(x => x.location)).size, note: 'R-Grade / Return & Repair' },
       ];
       if (otherItems.length > 0) {
         gradeRowsData.push({
-          name: '其它非A级',
+          name: 'Other Non-A (其他)',
           count: otherItems.length,
           locs: new Set(otherItems.map(x => x.location)).size,
           note: Array.from(new Set(otherItems.map(x => x.grade))).join(' / ')
@@ -1816,10 +1791,10 @@ export default function App() {
 
       gradeRowsData.forEach(item => {
         const pct = ((item.count / totalNonA) * 100).toFixed(1) + '%';
-        const r = summarySheet.addRow([item.name, item.count, pct, `${item.locs} 个`, item.note]);
+        const r = summarySheet.addRow([item.name, item.count, pct, item.locs, item.note]);
         r.height = 20;
         r.eachCell((cell, col) => {
-          cell.font = { name: '微软雅黑', size: 9 };
+          cell.font = { name: 'Arial', size: 9 };
           cell.alignment = { vertical: 'middle', horizontal: col === 1 || col === 5 ? 'left' : 'center' };
           cell.border = {
             top: { style: 'thin', color: { argb: 'E2E8F0' } },
@@ -1830,31 +1805,31 @@ export default function App() {
         });
       });
 
-      const totalGradeRow = summarySheet.addRow(['非A级合计', nonAGradeList.length, '100.0%', `${sortedLocs.length} 个`, '-']);
+      const totalGradeRow = summarySheet.addRow(['Total Non-A (合计)', nonAGradeList.length, '100.0%', sortedLocs.length, '-']);
       totalGradeRow.height = 22;
       totalGradeRow.eachCell(cell => {
-        cell.font = { name: '微软雅黑', size: 10, bold: true, color: { argb: 'FF0F172A' } };
+        cell.font = { name: 'Arial', size: 10, bold: true, color: { argb: 'FF0F172A' } };
         cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFF1F5F9' } };
         cell.alignment = { vertical: 'middle', horizontal: 'center' };
       });
 
       summarySheet.addRow([]);
 
-      // 二、按库位分布汇总
-      const sec2 = summarySheet.addRow(['二、库位分布汇总（各库位中非A级品箱数）']);
-      sec2.font = { name: '微软雅黑', size: 11, bold: true, color: { argb: 'FF6B21A8' } };
+      // Section 2: By Location
+      const sec2 = summarySheet.addRow(['2. Distribution by Location / 库位分布汇总']);
+      sec2.font = { name: 'Arial', size: 10, bold: true, color: { argb: 'FF6B21A8' } };
 
-      const hLoc = summarySheet.addRow(['库位名称', 'B级箱数', 'F级箱数', 'R级箱数', '非A级总箱数', '涉及客户']);
+      const hLoc = summarySheet.addRow(['Location (库位)', 'Grade B', 'Grade F', 'Grade R', 'Total (总数)', 'Customers (涉及客户)']);
       hLoc.height = 24;
       hLoc.eachCell(cell => {
-        cell.font = { name: '微软雅黑', size: 10, bold: true, color: { argb: 'FFFFFFFF' } };
+        cell.font = { name: 'Arial', size: 10, bold: true, color: { argb: 'FFFFFFFF' } };
         cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FF475569' } };
         cell.alignment = { vertical: 'middle', horizontal: 'center' };
       });
 
       sortedLocs.forEach(loc => {
         const d = locMap[loc];
-        const custList = Array.from(d.customers).join('、') || '未映射客户';
+        const custList = Array.from(d.customers).join(', ') || '-';
         const r = summarySheet.addRow([
           loc,
           d.b,
@@ -1865,7 +1840,7 @@ export default function App() {
         ]);
         r.height = 20;
         r.eachCell((cell, col) => {
-          cell.font = { name: '微软雅黑', size: 9 };
+          cell.font = { name: 'Arial', size: 9 };
           cell.alignment = { vertical: 'middle', horizontal: col === 1 || col === 6 ? 'left' : 'center' };
           cell.border = {
             top: { style: 'thin', color: { argb: 'E2E8F0' } },
@@ -1876,24 +1851,24 @@ export default function App() {
         });
       });
 
-      // Sheet 2: 完整明细清单
-      const detailSheet = workbook.addWorksheet('非A级品详细清单');
+      // Sheet 2: Detail List
+      const detailSheet = workbook.addWorksheet('Details (明细清单)');
       detailSheet.columns = [
-        { header: '序号', key: 'seq', width: 8 },
-        { header: '箱号', key: 'boxNo', width: 26 },
-        { header: '库位名称', key: 'location', width: 14 },
-        { header: '箱等级 (K列原值)', key: 'rawGrade', width: 18 },
-        { header: '等级归类', key: 'grade', width: 14 },
-        { header: '箱条码数 (S列)', key: 'barcodeCount', width: 16 },
-        { header: '工单号 (J列)', key: 'orderNo', width: 20 },
-        { header: '客户简称', key: 'customerName', width: 24 },
-        { header: '功率档', key: 'power', width: 16 }
+        { header: 'No. (序号)', key: 'seq', width: 8 },
+        { header: 'Box No. (箱号)', key: 'boxNo', width: 24 },
+        { header: 'Location (库位)', key: 'location', width: 14 },
+        { header: 'Raw Grade (原等级-Col K)', key: 'rawGrade', width: 20 },
+        { header: 'Category (归类)', key: 'grade', width: 14 },
+        { header: 'Barcode Qty (条码数-Col S)', key: 'barcodeCount', width: 20 },
+        { header: 'Order No. (工单号-Col J)', key: 'orderNo', width: 20 },
+        { header: 'Customer (客户名称)', key: 'customerName', width: 24 },
+        { header: 'Power (功率档)', key: 'power', width: 14 }
       ];
 
       const hDetail = detailSheet.getRow(1);
       hDetail.height = 28;
       hDetail.eachCell(cell => {
-        cell.font = { name: '微软雅黑', size: 10, bold: true, color: { argb: 'FFFFFFFF' } };
+        cell.font = { name: 'Arial', size: 10, bold: true, color: { argb: 'FFFFFFFF' } };
         cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FF1E293B' } };
         cell.alignment = { vertical: 'middle', horizontal: 'center' };
       });
@@ -1904,10 +1879,10 @@ export default function App() {
           boxNo: item.boxNo,
           location: item.location,
           rawGrade: item.rawGrade || item.grade,
-          grade: `${item.grade}级品`,
+          grade: `Grade ${item.grade}`,
           barcodeCount: item.barcodeCount !== undefined ? item.barcodeCount : '-',
           orderNo: item.orderNo || '-',
-          customerName: item.customerName || '未映射客户',
+          customerName: item.customerName || '-',
           power: item.power || '-'
         });
         r.height = 20;
@@ -1926,7 +1901,7 @@ export default function App() {
         }
 
         r.eachCell((cell, col) => {
-          cell.font = { name: '微软雅黑', size: 9 };
+          cell.font = { name: 'Arial', size: 9 };
           cell.alignment = { vertical: 'middle', horizontal: col === 2 || col === 7 || col === 8 ? 'left' : 'center' };
           cell.border = {
             top: { style: 'thin', color: { argb: 'F1F5F9' } },
@@ -1936,21 +1911,19 @@ export default function App() {
           };
         });
 
-        r.getCell('grade').font = { name: '微软雅黑', size: 9, bold: true, color: { argb: gradeColor } };
+        r.getCell('grade').font = { name: 'Arial', size: 9, bold: true, color: { argb: gradeColor } };
         r.getCell('grade').fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: gradeBg } };
       });
 
       const buffer = await workbook.xlsx.writeBuffer();
       const blob = new Blob([buffer], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
-      saveAs(blob, `非A级品(B_F_R)统计分析报表_${new Date().toISOString().split('T')[0]}.xlsx`);
+      saveAs(blob, `Non_A_Grade_Report_${new Date().toISOString().split('T')[0]}.xlsx`);
 
-      setSaveSuccess('非A级别品(B、F、R)统计分析报表导出成功！');
-      setTimeout(() => {
-        setSaveSuccess(null);
-      }, 4000);
+      setSaveSuccess('Exported: Non_A_Grade_Report.xlsx');
+      setTimeout(() => setSaveSuccess(null), 3000);
     } catch (err) {
       console.error(err);
-      setError('导出非A级品报表失败，请重试');
+      setError('Failed to export Non-A report / 导出失败');
     }
   };
 
@@ -2044,21 +2017,21 @@ export default function App() {
     if (zeroBarcodeList.length === 0) return;
     try {
       const workbook = new ExcelJS.Workbook();
-      const worksheet = workbook.addWorksheet('S列条码为0过滤清单');
+      const worksheet = workbook.addWorksheet('Zero Barcodes (条码为0)');
       worksheet.columns = [
-        { header: '原表格行号', key: 'rowIdx', width: 14 },
-        { header: '箱号', key: 'boxNo', width: 26 },
-        { header: '库位名称', key: 'location', width: 16 },
-        { header: 'K列箱等级', key: 'grade', width: 16 },
-        { header: 'S列条码数原值', key: 'rawBarcode', width: 18 },
-        { header: '工单号', key: 'orderNo', width: 20 },
-        { header: '过滤判定原因', key: 'reason', width: 34 }
+        { header: 'Row No. (原行号)', key: 'rowIdx', width: 14 },
+        { header: 'Box No. (箱号)', key: 'boxNo', width: 24 },
+        { header: 'Location (库位)', key: 'location', width: 14 },
+        { header: 'Grade (等级-Col K)', key: 'grade', width: 16 },
+        { header: 'Raw Barcode (原值-Col S)', key: 'rawBarcode', width: 18 },
+        { header: 'Order No. (工单号)', key: 'orderNo', width: 20 },
+        { header: 'Filter Reason (过滤原因)', key: 'reason', width: 30 }
       ];
       worksheet.views = [{ showGridLines: true }];
       const headerRow = worksheet.getRow(1);
       headerRow.height = 28;
       headerRow.eachCell(cell => {
-        cell.font = { name: '微软雅黑', size: 10, bold: true, color: { argb: 'FFFFFF' } };
+        cell.font = { name: 'Arial', size: 10, bold: true, color: { argb: 'FFFFFF' } };
         cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'EA580C' } };
         cell.alignment = { horizontal: 'center', vertical: 'middle' };
       });
@@ -2068,24 +2041,24 @@ export default function App() {
           boxNo: item.boxNo,
           location: item.location,
           grade: item.grade,
-          rawBarcode: item.rawBarcode === '' ? '(留空)' : item.rawBarcode,
+          rawBarcode: item.rawBarcode === '' ? '(Empty)' : item.rawBarcode,
           orderNo: item.orderNo || '-',
           reason: item.reason
         });
         r.height = 20;
         r.eachCell(cell => {
           cell.alignment = { vertical: 'middle' };
-          cell.font = { name: '微软雅黑', size: 9 };
+          cell.font = { name: 'Arial', size: 9 };
         });
       });
       const buffer = await workbook.xlsx.writeBuffer();
       const blob = new Blob([buffer], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
-      saveAs(blob, `S列箱条码数0过滤明细_${zeroBarcodeList.length}箱_${new Date().toISOString().split('T')[0]}.xlsx`);
-      setSaveSuccess(`成功导出 ${zeroBarcodeList.length} 箱条码数为0过滤明细报表！`);
-      setTimeout(() => setSaveSuccess(null), 4000);
+      saveAs(blob, `Zero_Barcode_Filtered_${zeroBarcodeList.length}Boxes_${new Date().toISOString().split('T')[0]}.xlsx`);
+      setSaveSuccess(`Exported: Zero_Barcode_Filtered_${zeroBarcodeList.length}Boxes.xlsx`);
+      setTimeout(() => setSaveSuccess(null), 3000);
     } catch (err) {
       console.error(err);
-      setError('导出条码过滤明细失败，请重试');
+      setError('Failed to export zero barcode list / 导出失败');
     }
   };
 
@@ -2094,18 +2067,18 @@ export default function App() {
     try {
       const workbook = new ExcelJS.Workbook();
 
-      // Sheet 1: 8箱差异排查与勾稽总览
-      const summarySheet = workbook.addWorksheet('8箱差异排查与勾稽总览');
+      // Sheet 1: Audit Overview
+      const summarySheet = workbook.addWorksheet('Audit Overview (勾稽总览)');
       summarySheet.columns = [
-        { header: '核对项目', key: 'item', width: 28 },
-        { header: '数值/箱数', key: 'value', width: 20 },
-        { header: '说明与特点', key: 'notes', width: 56 }
+        { header: 'Audit Item (核查项目)', key: 'item', width: 30 },
+        { header: 'Value (数量/数值)', key: 'value', width: 18 },
+        { header: 'Notes (特点与说明)', key: 'notes', width: 50 }
       ];
       summarySheet.views = [{ showGridLines: true }];
       const h1 = summarySheet.getRow(1);
       h1.height = 28;
       h1.eachCell(cell => {
-        cell.font = { name: '微软雅黑', size: 10, bold: true, color: { argb: 'FFFFFF' } };
+        cell.font = { name: 'Arial', size: 10, bold: true, color: { argb: 'FFFFFF' } };
         cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: '1E3A8A' } };
         cell.alignment = { horizontal: 'center', vertical: 'middle' };
       });
@@ -2115,104 +2088,104 @@ export default function App() {
         r.height = 22;
         r.eachCell(cell => {
           cell.alignment = { vertical: 'middle' };
-          cell.font = { name: '微软雅黑', size: 9 };
+          cell.font = { name: 'Arial', size: 9 };
         });
       };
 
-      addSummaryRow('1. 原始文件导入行数', `${totalRowsRaw} 行`, 'Excel 导入的有效数据行总数');
-      addSummaryRow('2. S列箱条码数=0过滤', `-${auditReport.zeroBarcodeBreakdown.total} 箱`, '明确填0/作废的异常箱行');
-      addSummaryRow('3. 纳入系统有效总箱数', `${totalRowsRaw - auditReport.zeroBarcodeBreakdown.total} 箱`, '7380 - 23 = 7357 箱（含A级与非A级）');
-      addSummaryRow('   ├─ A级有效箱数', `${data.length} 箱`, '纳入常规库位与客户分析看板');
-      addSummaryRow('   └─ 非A级品箱数(B/F/R)', `${nonAGradeCount} 箱`, '独立统计与导出，未混入A级分析');
-      addSummaryRow('4. 8箱差异根因透视', '差异 8 箱', '若按唯一箱号统计为7372箱，7372-23=7349，与7357差8箱，源头在7380与7372！');
-      addSummaryRow('5. 重复箱号增加的行数', `${auditReport.duplicateRowCount} 行`, auditReport.duplicateRowCount > 0 ? `检测到 ${auditReport.duplicateBoxes.length} 个箱号存在多次录入` : '未检测到重复箱号');
-      addSummaryRow('6. 空白箱号行数', `${auditReport.emptyBoxRows.length} 行`, auditReport.emptyBoxRows.length > 0 ? `第 ${auditReport.emptyBoxRows.map(x => x.rowIdx).join(', ')} 行` : '无空白箱号');
-      addSummaryRow('7. 未分配库位/待定行数', `${auditReport.emptyLocRows.length} 行`, auditReport.emptyLocRows.length > 0 ? `第 ${auditReport.emptyLocRows.map(x => x.rowIdx).join(', ')} 行` : '无未分配库位');
+      addSummaryRow('1. Raw Imported Rows (原始总行数)', `${totalRowsRaw}`, 'Total physical rows in source Excel');
+      addSummaryRow('2. Zero-Barcode Filtered (条码为0过滤)', `-${auditReport.zeroBarcodeBreakdown.total}`, 'Explicit 0 barcode rows excluded');
+      addSummaryRow('3. Valid Boxes Included (有效总箱数)', `${totalRowsRaw - auditReport.zeroBarcodeBreakdown.total}`, 'Formula: 7,380 - 23 = 7,357 boxes');
+      addSummaryRow('   ├─ Grade-A Boxes (A级良品箱数)', `${data.length}`, 'Included in primary warehouse analytics');
+      addSummaryRow('   └─ Non-A Grade (非A级品箱数 B/F/R)', `${nonAGradeCount}`, 'Managed & exported independently');
+      addSummaryRow('4. 8-Box Gap Diagnostics (8箱差异原因)', 'Gap: 8 Boxes', '7,372 - 23 = 7,349 vs 7,357; 7,380 - 7,372 = 8 rows gap in raw table');
+      addSummaryRow('5. Duplicate Box Rows (重复箱号行数)', `${auditReport.duplicateRowCount}`, auditReport.duplicateRowCount > 0 ? `${auditReport.duplicateBoxes.length} box numbers appeared multiple times` : 'None');
+      addSummaryRow('6. Blank Box Rows (空箱号行数)', `${auditReport.emptyBoxRows.length}`, auditReport.emptyBoxRows.length > 0 ? `Rows: ${auditReport.emptyBoxRows.map(x => x.rowIdx).join(', ')}` : 'None');
+      addSummaryRow('7. Unassigned Loc Rows (未分配库位)', `${auditReport.emptyLocRows.length}`, auditReport.emptyLocRows.length > 0 ? `Rows: ${auditReport.emptyLocRows.map(x => x.rowIdx).join(', ')}` : 'None');
 
-      // Sheet 2: 重复箱号明细 (若存在)
+      // Sheet 2: Duplicate Boxes
       if (auditReport.duplicateBoxes.length > 0) {
-        const dupSheet = workbook.addWorksheet('重复箱号明细');
+        const dupSheet = workbook.addWorksheet('Duplicates (重复箱号)');
         dupSheet.columns = [
-          { header: '原表行号', key: 'rowIdx', width: 14 },
-          { header: '箱号', key: 'boxNo', width: 26 },
-          { header: '库位名称', key: 'location', width: 16 },
-          { header: '箱等级', key: 'grade', width: 14 },
-          { header: '功率档', key: 'power', width: 16 },
-          { header: '工单号', key: 'orderNo', width: 20 },
-          { header: '重复特点说明', key: 'desc', width: 30 }
+          { header: 'Row No. (原行号)', key: 'rowIdx', width: 14 },
+          { header: 'Box No. (箱号)', key: 'boxNo', width: 24 },
+          { header: 'Location (库位)', key: 'location', width: 16 },
+          { header: 'Grade (等级)', key: 'grade', width: 14 },
+          { header: 'Power (功率)', key: 'power', width: 16 },
+          { header: 'Order No. (工单号)', key: 'orderNo', width: 20 },
+          { header: 'Notes (特征说明)', key: 'desc', width: 28 }
         ];
         dupSheet.views = [{ showGridLines: true }];
         const h2 = dupSheet.getRow(1);
         h2.height = 28;
         h2.eachCell(cell => {
-          cell.font = { name: '微软雅黑', size: 10, bold: true, color: { argb: 'FFFFFF' } };
+          cell.font = { name: 'Arial', size: 10, bold: true, color: { argb: 'FFFFFF' } };
           cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'B45309' } };
           cell.alignment = { horizontal: 'center', vertical: 'middle' };
         });
         auditReport.duplicateBoxes.forEach(dup => {
           dup.rows.forEach((r, idx) => {
             const row = dupSheet.addRow({
-              rowIdx: `第 ${r.rowIdx} 行`,
+              rowIdx: `Row ${r.rowIdx}`,
               boxNo: dup.boxNo,
               location: r.location,
               grade: r.grade,
               power: r.power,
               orderNo: r.orderNo,
-              desc: idx === 0 ? `首次出现 (共出现 ${dup.count} 次)` : `第 ${idx + 1} 次重复出现 (导致去重少1箱)`
+              desc: idx === 0 ? `First Entry (${dup.count} entries)` : `Duplicate Entry (+1 row)`
             });
             row.height = 20;
             row.eachCell(c => {
               c.alignment = { vertical: 'middle' };
-              c.font = { name: '微软雅黑', size: 9 };
+              c.font = { name: 'Arial', size: 9 };
             });
           });
         });
       }
 
-      // Sheet 3: S列条码=0过滤明细 (23箱)
-      const zeroSheet = workbook.addWorksheet('S列条码为0清单(23箱)');
+      // Sheet 3: Zero Barcode Filtered
+      const zeroSheet = workbook.addWorksheet('Zero Barcodes (0条码明细)');
       zeroSheet.columns = [
-        { header: '原表行号', key: 'rowIdx', width: 14 },
-        { header: '箱号', key: 'boxNo', width: 26 },
-        { header: '库位名称', key: 'location', width: 16 },
-        { header: 'K列箱等级', key: 'grade', width: 14 },
-        { header: 'S列条码数原值', key: 'rawBarcode', width: 16 },
-        { header: '工单号', key: 'orderNo', width: 20 },
-        { header: '判定原因', key: 'reason', width: 30 }
+        { header: 'Row No. (原行号)', key: 'rowIdx', width: 14 },
+        { header: 'Box No. (箱号)', key: 'boxNo', width: 24 },
+        { header: 'Location (库位)', key: 'location', width: 16 },
+        { header: 'Grade (Col K)', key: 'grade', width: 14 },
+        { header: 'Raw Barcode (Col S)', key: 'rawBarcode', width: 16 },
+        { header: 'Order No. (工单号)', key: 'orderNo', width: 20 },
+        { header: 'Reason (原因)', key: 'reason', width: 28 }
       ];
       zeroSheet.views = [{ showGridLines: true }];
       const h3 = zeroSheet.getRow(1);
       h3.height = 28;
       h3.eachCell(cell => {
-        cell.font = { name: '微软雅黑', size: 10, bold: true, color: { argb: 'FFFFFF' } };
+        cell.font = { name: 'Arial', size: 10, bold: true, color: { argb: 'FFFFFF' } };
         cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'EA580C' } };
         cell.alignment = { horizontal: 'center', vertical: 'middle' };
       });
       auditReport.zeroBarcodeBreakdown.rows.forEach(item => {
         const r = zeroSheet.addRow({
-          rowIdx: `第 ${item.rowIdx} 行`,
+          rowIdx: `Row ${item.rowIdx}`,
           boxNo: item.boxNo,
           location: item.location,
           grade: item.grade,
-          rawBarcode: item.rawBarcode === '' ? '(留空)' : item.rawBarcode,
+          rawBarcode: item.rawBarcode === '' ? '(Empty)' : item.rawBarcode,
           orderNo: item.orderNo || '-',
           reason: item.reason
         });
         r.height = 20;
         r.eachCell(c => {
           c.alignment = { vertical: 'middle' };
-          c.font = { name: '微软雅黑', size: 9 };
+          c.font = { name: 'Arial', size: 9 };
         });
       });
 
       const buffer = await workbook.xlsx.writeBuffer();
       const blob = new Blob([buffer], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
-      saveAs(blob, `8箱差异排查与行号诊断报告_${new Date().toISOString().split('T')[0]}.xlsx`);
-      setSaveSuccess('成功导出《8箱差异排查与行号诊断报告.xlsx》！');
-      setTimeout(() => setSaveSuccess(null), 4000);
+      saveAs(blob, `Audit_Diagnostics_Report_${new Date().toISOString().split('T')[0]}.xlsx`);
+      setSaveSuccess('Exported: Audit_Diagnostics_Report.xlsx');
+      setTimeout(() => setSaveSuccess(null), 3000);
     } catch (err) {
       console.error(err);
-      setError('导出8箱差异诊断报告失败，请重试');
+      setError('Failed to export audit report / 导出失败');
     }
   };
 
@@ -2243,26 +2216,31 @@ export default function App() {
           <div className="w-8 h-8 bg-blue-500 rounded-lg flex items-center justify-center shadow-lg shadow-blue-500/20">
             <BarChart3 className="w-5 h-5 text-white" />
           </div>
-          <span className="text-white font-bold tracking-tight uppercase">Inv Analyst</span>
+          <div>
+            <span className="text-white font-bold tracking-tight uppercase block leading-none">Inv Analyst</span>
+            <span className="text-[9px] text-slate-400 font-medium">仓储智能分析</span>
+          </div>
         </div>
         
-        <nav className="mt-4 flex-1">
-          <div className="px-6 py-2 text-[10px] font-bold text-slate-500 uppercase tracking-widest mb-2 opacity-50">数据管理</div>
+        <nav className="mt-4 flex-1 px-4">
+          <div className="px-3 py-2 text-[10px] font-bold text-slate-500 uppercase tracking-widest mb-1 opacity-70">
+            Data Management (数据管理)
+          </div>
           <button 
             onClick={reset}
             className={cn(
-              "w-full flex items-center gap-3 px-6 py-3 transition-all text-sm font-medium relative group",
-              !data.length ? "bg-blue-600 text-white" : "text-slate-400 hover:text-white hover:bg-slate-800"
+              "w-full flex items-center gap-2.5 px-3 py-2.5 rounded-xl transition-all text-xs font-bold relative group",
+              !data.length ? "bg-blue-600 text-white shadow-md shadow-blue-600/20" : "text-slate-400 hover:text-white hover:bg-slate-800"
             )}
           >
-            {!data.length && <span className="absolute left-0 top-0 bottom-0 w-1 bg-white animate-pulse" />}
-            <Upload className="w-4 h-4" />
-            重置分析沙盒
+            <Upload className="w-4 h-4 shrink-0" />
+            <span>Reset Workspace (重置沙盒)</span>
           </button>
         </nav>
 
-        <div className="p-6 border-t border-slate-800 text-[10px] text-slate-500 uppercase font-bold tracking-widest">
-          系统状态: <span className="text-emerald-500">运行中</span>
+        <div className="p-5 border-t border-slate-800 text-[10px] text-slate-500 uppercase font-bold tracking-wider flex items-center justify-between">
+          <span>System: Online (运行中)</span>
+          <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse" />
         </div>
       </aside>
 
@@ -2270,21 +2248,24 @@ export default function App() {
       <main className="flex-1 flex flex-col overflow-hidden">
         {/* Top Header */}
         <header className="h-16 bg-white border-b border-slate-200 flex items-center justify-between px-8 shrink-0">
-          <div className="flex items-center gap-2">
-            <h2 className="text-lg font-bold text-slate-800">库存数据统计分析</h2>
-            <span className="px-2 py-0.5 bg-slate-100 text-[10px] text-slate-400 rounded-full font-bold uppercase tracking-wider">v1.2.1</span>
+          <div className="flex items-center gap-3">
+            <h2 className="text-base font-bold text-slate-800 flex items-center gap-2">
+              <span>Inventory Analytics</span>
+              <span className="text-xs font-normal text-slate-400">(库存数据统计分析)</span>
+            </h2>
+            <span className="px-2 py-0.5 bg-slate-100 text-[10px] text-slate-500 rounded-full font-bold uppercase tracking-wider">v5.1 Pro</span>
           </div>
           
           <div className="flex items-center gap-6">
             {fileName && (
               <div className="text-right hidden sm:block">
-                <p className="text-[10px] uppercase font-bold text-slate-400 leading-none mb-1">当前操作文件</p>
-                <p className="text-sm font-bold text-slate-700">{fileName}</p>
+                <p className="text-[10px] uppercase font-bold text-slate-400 leading-none mb-1">Active File (当前文件)</p>
+                <p className="text-xs font-bold text-slate-700 truncate max-w-xs">{fileName}</p>
               </div>
             )}
-            <div className="h-10 w-px bg-slate-100 hidden sm:block" />
-            <div className="w-10 h-10 rounded-full bg-slate-50 border border-slate-200 flex items-center justify-center text-slate-400 hover:text-slate-600 transition-colors cursor-help">
-              <FileText className="w-5 h-5" />
+            <div className="h-8 w-px bg-slate-100 hidden sm:block" />
+            <div className="w-9 h-9 rounded-full bg-slate-50 border border-slate-200 flex items-center justify-center text-slate-400 hover:text-slate-600 transition-colors cursor-help">
+              <FileText className="w-4 h-4" />
             </div>
           </div>
         </header>
@@ -2298,13 +2279,13 @@ export default function App() {
               {/* Card 1: Main Inventory Data Upload */}
               <div className="bg-white p-6 rounded-3xl border border-slate-200 shadow-sm flex flex-col gap-4">
                 <div className="flex items-center justify-between pb-3 border-b border-slate-100">
-                  <h4 className="text-xs font-bold uppercase tracking-wider text-slate-500 flex items-center gap-2">
+                  <h4 className="text-xs font-bold uppercase tracking-wider text-slate-600 flex items-center gap-2">
                     <span className="w-5 h-5 rounded-full bg-blue-100 text-blue-600 flex items-center justify-center font-bold text-[10px]">1</span>
-                    主库存数据源
+                    Inventory Source (主库存数据源)
                   </h4>
                   {data.length > 0 && (
-                    <span className="px-2 py-0.5 bg-emerald-50 text-emerald-600 rounded-full text-[9px] font-bold border border-emerald-100 animate-pulse">
-                      正常载入
+                    <span className="px-2 py-0.5 bg-emerald-50 text-emerald-600 rounded-full text-[9px] font-bold border border-emerald-100">
+                      Loaded (已载入)
                     </span>
                   )}
                 </div>
@@ -2323,16 +2304,16 @@ export default function App() {
                       onChange={handleFileUpload}
                       className="absolute inset-0 opacity-0 cursor-pointer z-10"
                     />
-                    <div className="w-12 h-12 bg-blue-50 rounded-2xl flex items-center justify-center mb-4 text-blue-600 group-hover:scale-110 transition-transform">
+                    <div className="w-12 h-12 bg-blue-50 rounded-2xl flex items-center justify-center mb-3 text-blue-600 group-hover:scale-110 transition-transform">
                       <Upload className="w-6 h-6" />
                     </div>
-                    <h5 className="font-bold text-sm text-slate-800">拖拽主库存 Excel 到此处</h5>
-                    <p className="text-[10px] text-slate-400 mt-1">或点击选择本地文件格式 (.xlsx, .xls)</p>
+                    <h5 className="font-bold text-sm text-slate-800">Drop Inventory Excel Here</h5>
+                    <p className="text-[10px] text-slate-400 mt-0.5">拖拽主库存 Excel 或点击上传 (.xlsx, .xls)</p>
                     
                     {isProcessing && (
                       <div className="absolute inset-0 bg-white/95 backdrop-blur-sm rounded-2xl flex flex-col items-center justify-center z-20">
                         <Loader2 className="w-8 h-8 text-blue-600 animate-spin mb-2" />
-                        <p className="text-[10px] font-bold text-slate-800 tracking-wider">正在解析数据...</p>
+                        <p className="text-[10px] font-bold text-slate-800 tracking-wider">Parsing data (解析中)...</p>
                       </div>
                     )}
                   </motion.div>
@@ -2341,64 +2322,64 @@ export default function App() {
                     <div className="absolute -right-6 -bottom-6 w-20 h-20 bg-white/5 rounded-full" />
                     <div className="space-y-4">
                       <div>
-                        <p className="text-[9px] text-slate-500 uppercase tracking-widest font-bold">已连接库存文件</p>
-                        <p className="text-sm font-bold truncate mt-1 text-slate-100">{fileName}</p>
+                        <p className="text-[9px] text-slate-400 uppercase tracking-widest font-bold">Connected File (当前库存)</p>
+                        <p className="text-xs font-bold truncate mt-1 text-slate-100">{fileName}</p>
                       </div>
                       <div className="grid grid-cols-2 gap-2 border-t border-slate-800 pt-3">
                         <div>
-                          <p className="text-[9px] text-slate-500 uppercase">A级有效箱数</p>
-                          <p className="text-lg font-bold font-mono tracking-tight text-blue-400">{data.length} 箱</p>
+                          <p className="text-[9px] text-slate-400 uppercase">Grade-A Boxes (A级有效)</p>
+                          <p className="text-lg font-bold font-mono tracking-tight text-blue-400">{data.length} <span className="text-xs font-normal">Boxes</span></p>
                         </div>
                         <div>
-                          <p className="text-[9px] text-slate-500 uppercase">已锁定库位数</p>
-                          <p className="text-lg font-bold font-mono tracking-tight text-emerald-400">{results.length} 个</p>
+                          <p className="text-[9px] text-slate-400 uppercase">Active Locs (锁定库位)</p>
+                          <p className="text-lg font-bold font-mono tracking-tight text-emerald-400">{results.length} <span className="text-xs font-normal">Locs</span></p>
                         </div>
                       </div>
 
-                      {/* 数据核对与勾稽闭环卡 */}
+                      {/* Reconciliation Card */}
                       <div className="bg-slate-950/90 border border-slate-800 rounded-xl p-3 space-y-2.5">
                         <div className="flex items-center justify-between">
                           <span className="text-[10px] font-bold text-slate-300 flex items-center gap-1.5">
                             <CheckCircle2 className="w-3.5 h-3.5 text-emerald-400" />
-                            数据全流程勾稽闭环
+                            Reconciliation (数据闭环)
                           </span>
                           <span className="text-[9px] font-bold text-emerald-400 bg-emerald-950/80 px-2 py-0.5 rounded-full border border-emerald-800/60">
-                            零统计误差
+                            Zero Error (零误差)
                           </span>
                         </div>
 
                         <div className="grid grid-cols-4 gap-1.5 text-center font-mono">
                           <div className="bg-slate-900 p-1.5 rounded-lg border border-slate-800">
-                            <span className="text-[8px] text-slate-400 block font-sans">原始行数</span>
+                            <span className="text-[8px] text-slate-400 block font-sans">Raw Rows (原行)</span>
                             <span className="text-xs font-bold text-white">{totalRowsRaw}</span>
                           </div>
                           <div 
                             onClick={() => setShowZeroBarcodeModal(true)}
                             className="bg-orange-950/60 p-1.5 rounded-lg border border-orange-800/80 cursor-pointer hover:border-orange-500 transition-colors group"
-                            title={`点击查看被过滤的条码为0的 ${zeroBarcodeCount} 箱明细`}
+                            title={`Click to view ${zeroBarcodeCount} filtered zero-barcode boxes`}
                           >
                             <span className="text-[8px] text-orange-300 block font-sans flex items-center justify-center gap-0.5">
-                              S列=0 <Eye className="w-2.5 h-2.5 group-hover:scale-125 transition-transform" />
+                              Col S=0 <Eye className="w-2.5 h-2.5 group-hover:scale-125 transition-transform" />
                             </span>
                             <span className="text-xs font-bold text-orange-400">-{zeroBarcodeCount}</span>
                           </div>
                           <div className="bg-blue-950/60 p-1.5 rounded-lg border border-blue-800/80">
-                            <span className="text-[8px] text-blue-300 block font-sans">A级箱数</span>
+                            <span className="text-[8px] text-blue-300 block font-sans">Grade-A (A级)</span>
                             <span className="text-xs font-bold text-blue-400">{data.length}</span>
                           </div>
                           <div className="bg-purple-950/60 p-1.5 rounded-lg border border-purple-800/80">
-                            <span className="text-[8px] text-purple-300 block font-sans">非A级品</span>
+                            <span className="text-[8px] text-purple-300 block font-sans">Non-A (非A)</span>
                             <span className="text-xs font-bold text-purple-300">{nonAGradeCount}</span>
                           </div>
                         </div>
 
-                        <div className="bg-slate-900/80 rounded-lg p-2 text-[9px] font-mono text-slate-400 border border-slate-800/60 space-y-1">
+                        <div className="bg-slate-900/80 rounded-lg p-2 text-[9px] font-mono text-slate-400 border border-slate-800/60 space-y-0.5">
                           <div className="flex items-center justify-between text-slate-300">
-                            <span>有效总箱数:</span>
-                            <span className="text-white font-bold">{data.length + nonAGradeCount} 箱</span>
+                            <span>Valid Total (有效总数):</span>
+                            <span className="text-white font-bold">{data.length + nonAGradeCount} Boxes</span>
                           </div>
                           <div className="text-[8.5px] text-emerald-400/90 leading-tight">
-                            核对: {totalRowsRaw} (原总行) - {zeroBarcodeCount} (条码0) = {data.length + nonAGradeCount} [{data.length} A级 + {nonAGradeCount} 非A]
+                            Equation: {totalRowsRaw} (Raw) - {zeroBarcodeCount} (Col S=0) = {data.length + nonAGradeCount} [{data.length} A + {nonAGradeCount} Non-A]
                           </div>
                         </div>
 
@@ -2408,7 +2389,7 @@ export default function App() {
                             className="w-full py-1 px-2 bg-orange-950/50 hover:bg-orange-900/60 text-orange-300 rounded-lg text-[9px] font-bold border border-orange-800/60 flex items-center justify-center gap-1.5 transition-colors"
                           >
                             <Eye className="w-3 h-3 text-orange-400" />
-                            查看已过滤的 {zeroBarcodeCount} 箱无条码/0条码明细
+                            View Zero Barcodes ({zeroBarcodeCount} Boxes)
                           </button>
                         )}
 
@@ -2417,38 +2398,38 @@ export default function App() {
                           className="w-full py-1.5 px-2 bg-indigo-950/70 hover:bg-indigo-900 text-indigo-200 rounded-lg text-[9px] font-bold border border-indigo-700/60 flex items-center justify-center gap-1.5 transition-colors shadow-sm mt-1 group"
                         >
                           <HelpCircle className="w-3 h-3 text-indigo-400 group-hover:scale-110 transition-transform" />
-                          8箱差异深度溯源与行号诊断
+                          Audit & Diagnostics (8-Box Gap)
                         </button>
                       </div>
 
-                      {/* 非A级别品 (B, F, R) 专属统计与单独导出入口 */}
+                      {/* Non-A Grade Block */}
                       {nonAGradeList.length > 0 && (
                         <div className="bg-purple-950/70 border border-purple-800/80 rounded-xl p-3 space-y-2">
                           <div className="flex items-center justify-between">
                             <span className="text-[10px] font-bold text-purple-300 flex items-center gap-1.5">
                               <span className="w-2 h-2 rounded-full bg-purple-400 animate-pulse" />
-                              非A级别品 (K列箱等级)
+                              Non-A Grade (非A级品 - Col K)
                             </span>
                             <span className="font-mono text-xs font-bold text-purple-200">
-                              共 {nonAGradeList.length} 箱
+                              {nonAGradeList.length} Boxes
                             </span>
                           </div>
                           
                           <div className="grid grid-cols-3 gap-1.5 text-[9px] text-center">
                             <div className="bg-purple-900/60 py-1.5 px-1 rounded-lg border border-purple-700/50">
-                              <span className="text-blue-300 font-bold block">B 级品</span>
+                              <span className="text-blue-300 font-bold block">Grade B</span>
                               <span className="font-mono text-white text-xs font-bold">
                                 {nonAGradeList.filter(x => x.grade === 'B').length}
                               </span>
                             </div>
                             <div className="bg-purple-900/60 py-1.5 px-1 rounded-lg border border-purple-700/50">
-                              <span className="text-purple-300 font-bold block">F 级品</span>
+                              <span className="text-purple-300 font-bold block">Grade F</span>
                               <span className="font-mono text-white text-xs font-bold">
                                 {nonAGradeList.filter(x => x.grade === 'F').length}
                               </span>
                             </div>
                             <div className="bg-purple-900/60 py-1.5 px-1 rounded-lg border border-purple-700/50">
-                              <span className="text-rose-300 font-bold block">R 级品</span>
+                              <span className="text-rose-300 font-bold block">Grade R</span>
                               <span className="font-mono text-white text-xs font-bold">
                                 {nonAGradeList.filter(x => x.grade === 'R').length}
                               </span>
@@ -2461,15 +2442,15 @@ export default function App() {
                               className="flex-1 py-1.5 px-2 bg-purple-900/90 hover:bg-purple-800 text-purple-200 hover:text-white rounded-lg text-[10px] font-bold transition-all border border-purple-700/60 flex items-center justify-center gap-1"
                             >
                               <Layers className="w-3 h-3" />
-                              查看明细
+                              Details (明细)
                             </button>
                             <button
                               onClick={exportNonAGradeToExcel}
                               className="flex-1 py-1.5 px-2 bg-purple-600 hover:bg-purple-500 text-white rounded-lg text-[10px] font-bold transition-all flex items-center justify-center gap-1 shadow-md active:scale-95"
-                              title="单独导出非A级别品 (B, F, R) 统计报表"
+                              title="Export Non-A Grade Report"
                             >
                               <Download className="w-3 h-3" />
-                              单独导出
+                              Export (导出)
                             </button>
                           </div>
                         </div>
@@ -2480,14 +2461,14 @@ export default function App() {
                           className="flex-1 flex items-center justify-center gap-1.5 bg-emerald-600 hover:bg-emerald-500 text-white font-bold py-2 rounded-xl text-xs transition-colors shadow-md active:scale-95"
                         >
                           <Download className="w-3.5 h-3.5" />
-                          导出库位表
+                          Export Excel (导出库位表)
                         </button>
                         <button 
                           onClick={reset}
                           className="px-3 bg-slate-800 hover:bg-slate-700 text-slate-400 hover:text-white rounded-xl text-xs transition-colors"
-                          title="置空当前库存数据"
+                          title="Reset current inventory"
                         >
-                          重置
+                          Reset (重置)
                         </button>
                       </div>
                     </div>
@@ -2499,26 +2480,26 @@ export default function App() {
               <div className="bg-white p-6 rounded-3xl border border-slate-200 shadow-sm flex flex-col gap-4">
                 <div className="flex items-center justify-between pb-3 border-b border-slate-100">
                   <div className="flex items-center gap-2">
-                    <h4 className="text-xs font-bold uppercase tracking-wider text-slate-500 flex items-center gap-2">
+                    <h4 className="text-xs font-bold uppercase tracking-wider text-slate-600 flex items-center gap-2">
                       <span className="w-5 h-5 rounded-full bg-violet-100 text-violet-600 flex items-center justify-center font-bold text-[10px]">2</span>
-                      工单与客户对照表
+                      Order Mapping (工单对照表)
                     </h4>
                     <button 
                       onClick={downloadMappingTemplate} 
-                      className="text-[10px] text-violet-600 hover:text-violet-700 font-bold hover:underline transition-all flex items-center gap-0.5 ml-2 mr-auto"
-                      title="下载标准工单-客户对照表 Excel 范本模板"
+                      className="text-[10px] text-violet-600 hover:text-violet-700 font-bold hover:underline transition-all flex items-center gap-0.5 ml-1"
+                      title="Download template Excel"
                     >
-                      (下载模本)
+                      (Template / 模板)
                     </button>
                   </div>
                   {mappingFileName && (
                     isSaved ? (
                       <span className="px-2 py-0.5 bg-emerald-50 text-emerald-600 rounded-full text-[9px] font-bold border border-emerald-100 flex items-center gap-1">
-                        <span className="w-1 h-1 rounded-full bg-emerald-500" /> 对照已保存
+                        <span className="w-1 h-1 rounded-full bg-emerald-500" /> Saved (已保存)
                       </span>
                     ) : (
                       <span className="px-2 py-0.5 bg-amber-50 text-amber-600 rounded-full text-[9px] font-bold border border-amber-200 flex items-center gap-1 animate-pulse">
-                        <span className="w-1.5 h-1.5 rounded-full bg-amber-500 shrink-0" /> 临时加载 (未保存)
+                        <span className="w-1.5 h-1.5 rounded-full bg-amber-500 shrink-0" /> Unsaved (未保存)
                       </span>
                     )
                   )}
@@ -2531,7 +2512,7 @@ export default function App() {
                       animate={{ opacity: 1, y: 0 }}
                       onDragOver={(e) => e.preventDefault()}
                       onDrop={handleMappingDrop}
-                      className="p-8 rounded-2xl border-2 border-dashed border-slate-200 flex flex-col items-center justify-center text-center relative group hover:border-violet-500 hover:bg-violet-50/10 transition-all duration-300 min-h-[160px]"
+                      className="p-8 rounded-2xl border-2 border-dashed border-slate-200 flex flex-col items-center justify-center text-center relative group hover:border-violet-500 hover:bg-violet-50/10 transition-all duration-300 min-h-[150px]"
                     >
                       <input 
                         type="file" 
@@ -2539,39 +2520,29 @@ export default function App() {
                         onChange={handleMappingFileUpload}
                         className="absolute inset-0 opacity-0 cursor-pointer z-10"
                       />
-                      <div className="w-12 h-12 bg-violet-50 rounded-2xl flex items-center justify-center mb-4 text-violet-600 group-hover:scale-110 transition-transform">
+                      <div className="w-12 h-12 bg-violet-50 rounded-2xl flex items-center justify-center mb-3 text-violet-600 group-hover:scale-110 transition-transform">
                         <Package className="w-6 h-6 animate-pulse" />
                       </div>
-                      <h5 className="font-bold text-sm text-slate-800">拖拽工单-客户对照表此处</h5>
-                      <p className="text-[10px] text-slate-400 mt-1">建立库位销售单号/工单号与客户名称对应关系</p>
+                      <h5 className="font-bold text-sm text-slate-800">Drop Mapping Excel Here</h5>
+                      <p className="text-[10px] text-slate-400 mt-0.5">拖拽工单-客户对照表以建立关联</p>
                     </motion.div>
 
-                    <div className="bg-slate-50 border border-slate-100/80 rounded-2xl p-4 text-xs text-slate-600 space-y-3 shadow-inner">
+                    <div className="bg-slate-50 border border-slate-100 rounded-2xl p-3 text-xs text-slate-600 space-y-1.5">
                       <div className="flex items-center justify-between">
-                        <p className="font-bold text-slate-700 flex items-center gap-1.5 text-[11px]">
-                          <FileText className="w-3.5 h-3.5 text-violet-500" />
-                          📊 对照表格式与匹配规范：
+                        <p className="font-bold text-slate-700 flex items-center gap-1 text-[10px]">
+                          <FileText className="w-3 h-3 text-violet-500" />
+                          Mapping Spec (匹配规则):
                         </p>
                         <button
                           onClick={downloadMappingTemplate}
-                          className="text-[10px] bg-violet-100 hover:bg-violet-200 text-violet-700 font-bold px-2 py-0.5 rounded-lg transition-colors flex items-center gap-0.5 border border-violet-200/50"
+                          className="text-[9px] bg-violet-100 hover:bg-violet-200 text-violet-700 font-bold px-2 py-0.5 rounded transition-colors"
                         >
-                          <Download className="w-3 h-3" /> 下载标准模板.xlsx
+                          Template.xlsx
                         </button>
                       </div>
-                      <div className="space-y-2 text-[11px] leading-relaxed text-slate-500">
-                        <p className="flex items-start gap-1">
-                          <span className="text-violet-500 font-bold mt-0.5 shrink-0">B</span>
-                          <span>核心匹配列一：Excel 工作簿内<strong>第 B 列（第二列）</strong>需为【工单号 / 销售单号】类型编码。</span>
-                        </p>
-                        <p className="flex items-start gap-1">
-                          <span className="text-violet-500 font-bold mt-0.5 shrink-0">F</span>
-                          <span>核心匹配列二：Excel 工作簿内<strong>第 F 列（第六列）</strong>需定义该销售单对应的【客户简称 / 名称】。</span>
-                        </p>
-                        <p className="flex items-start gap-1 text-[10px] text-slate-400">
-                          <span className="text-slate-300 font-bold mt-0.5 shrink-0">•</span>
-                          <span>兼容性：其它列（第 A, C, D, E 等）可以随意放置辅助统计信息或留空，均不会影响工单信息的翻译提取。若列位稍有歪斜，算法将自动根据首行表头自动校准。</span>
-                        </p>
+                      <div className="text-[10px] space-y-0.5 text-slate-500">
+                        <p><span className="text-violet-600 font-bold">Col B</span>: Order / Sales No. (工单/销售单号)</p>
+                        <p><span className="text-violet-600 font-bold">Col F</span>: Customer Name (客户简称/名称)</p>
                       </div>
                     </div>
                   </div>
@@ -2580,28 +2551,26 @@ export default function App() {
                     <div className="absolute -right-6 -bottom-6 w-20 h-20 bg-white/5 rounded-full" />
                     <div className="space-y-4">
                       <div>
-                        <p className="text-[9px] text-violet-400 uppercase tracking-widest font-bold">已连接对照字典</p>
-                        <p className="text-sm font-bold truncate mt-1 text-slate-100">{mappingFileName}</p>
+                        <p className="text-[9px] text-violet-400 uppercase tracking-widest font-bold">Connected Dictionary (已连对照)</p>
+                        <p className="text-xs font-bold truncate mt-1 text-slate-100">{mappingFileName}</p>
                       </div>
                       <div className="grid grid-cols-2 gap-2 border-t border-violet-900 pt-3">
                         <div>
-                          <p className="text-[9px] text-violet-400 uppercase">已识别关联规则</p>
-                          <p className="text-lg font-bold font-mono tracking-tight text-violet-300">{Object.keys(orderCustomerMap).length} 条</p>
+                          <p className="text-[9px] text-violet-400 uppercase">Rules (关联规则)</p>
+                          <p className="text-lg font-bold font-mono tracking-tight text-violet-300">{Object.keys(orderCustomerMap).length} <span className="text-xs font-normal">Rules</span></p>
                         </div>
                         <div>
-                          <p className="text-[9px] text-violet-400 uppercase">已翻译关联客户</p>
-                          <p className="text-lg font-bold font-mono tracking-tight text-violet-300">{customerStats.filter(c => c.customerName !== '未映射客户').length} 位</p>
+                          <p className="text-[9px] text-violet-400 uppercase">Clients (关联客户)</p>
+                          <p className="text-lg font-bold font-mono tracking-tight text-violet-300">{customerStats.filter(c => c.customerName !== '未映射客户').length} <span className="text-xs font-normal">Clients</span></p>
                         </div>
                       </div>
 
                       {!isSaved && (
-                        <div className="bg-amber-500/10 border border-amber-500/20 rounded-xl p-3 text-[10px] text-amber-200 leading-relaxed">
+                        <div className="bg-amber-500/10 border border-amber-500/20 rounded-xl p-2.5 text-[9px] text-amber-200 leading-relaxed">
                           <p className="font-bold flex items-center gap-1 text-amber-400 mb-0.5">
-                            <AlertCircle className="w-3.5 h-3.5" /> 提示：对照表尚未永久保存
+                            <AlertCircle className="w-3 h-3" /> Unsaved: Loaded in memory only
                           </p>
-                          当前只在内存中临时加载。
-                          为了以后再次打开时不需重复上传，
-                          <span className="text-white font-bold underline">请务必点击下方的保存按钮</span>将对照规则固化于您本机的浏览器存储中。
+                          建议点击下方保存按钮固化于本地或云端，避免后续重复上传。
                         </div>
                       )}
                     </div>
@@ -2610,10 +2579,10 @@ export default function App() {
                       {!isSaved && (
                         <button 
                           onClick={persistMappingToLocalStorage}
-                          className="w-full flex items-center justify-center gap-1.5 bg-amber-500 hover:bg-amber-600 text-slate-950 font-bold py-2.5 rounded-xl text-xs transition-colors shadow-lg shadow-amber-500/20 active:scale-95 animate-pulse"
+                          className="w-full flex items-center justify-center gap-1.5 bg-amber-500 hover:bg-amber-600 text-slate-950 font-bold py-2 rounded-xl text-xs transition-colors shadow-md active:scale-95"
                         >
                           <Save className="w-3.5 h-3.5" />
-                          💾 确认保存至本地（后续免上传）
+                          Save Locally (保存至本地)
                         </button>
                       )}
 
@@ -2621,10 +2590,10 @@ export default function App() {
                         onClick={saveMappingToCloud}
                         disabled={isCloudSaving}
                         className={cn(
-                          "w-full flex items-center justify-center gap-1.5 font-bold py-2.5 rounded-xl text-xs transition-all border shadow-lg z-10",
+                          "w-full flex items-center justify-center gap-1.5 font-bold py-2 rounded-xl text-xs transition-all border shadow-md z-10",
                           isCloudSynced 
-                            ? "bg-emerald-600 hover:bg-emerald-700 text-white border-emerald-500 hover:border-emerald-600"
-                            : "bg-indigo-600 hover:bg-indigo-700 text-white border-indigo-500 hover:border-indigo-600 active:scale-95"
+                            ? "bg-emerald-600 hover:bg-emerald-700 text-white border-emerald-500"
+                            : "bg-indigo-600 hover:bg-indigo-700 text-white border-indigo-500 active:scale-95"
                         )}
                       >
                         {isCloudSaving ? (
@@ -2632,109 +2601,101 @@ export default function App() {
                         ) : isCloudSynced ? (
                           <CheckCircle2 className="w-3.5 h-3.5 text-emerald-200" />
                         ) : (
-                          <Cloud className="w-3.5 h-3.5 animate-bounce" />
+                          <Cloud className="w-3.5 h-3.5" />
                         )}
-                        {isCloudSaving ? '正在发布至云端数据库...' : isCloudSynced ? '☁️ 已发布并存储在云端数据库' : '☁️ 存储发布至云端数据库（多终端共享）'}
+                        {isCloudSaving ? 'Publishing to Cloud...' : isCloudSynced ? 'Synced to Cloud (云端已同步)' : 'Sync to Cloud (发布至云端共享)'}
                       </button>
                       {lastSyncedCloudTime && (
-                        <p className="text-[9px] text-violet-300 text-center font-mono">
-                          云端同步时间: {lastSyncedCloudTime}
+                        <p className="text-[8px] text-violet-300 text-center font-mono">
+                          Last Synced: {lastSyncedCloudTime}
                         </p>
                       )}
 
-                      <div className="flex gap-2 mt-1">
+                      <div className="flex gap-2 mt-0.5">
                         {customerStats.length > 0 && (
                           <button 
                             onClick={exportCustomerStatsToExcel}
-                            className="flex-1 flex items-center justify-center gap-1.5 bg-violet-750 hover:bg-violet-650 text-white font-bold py-2 rounded-xl text-xs transition-colors border border-violet-600 shadow-md active:scale-95"
+                            className="flex-1 flex items-center justify-center gap-1.5 bg-violet-800 hover:bg-violet-700 text-white font-bold py-1.5 rounded-xl text-xs transition-colors border border-violet-600 shadow-sm active:scale-95"
                           >
                             <Download className="w-3.5 h-3.5" />
-                            导出客户统计
+                            Customer Stats (客户统计)
                           </button>
                         )}
                         <button 
                           onClick={clearMapping}
-                          className="px-4 py-2 bg-violet-900 hover:bg-violet-800 text-violet-300 hover:text-white rounded-xl text-xs font-bold transition-colors shadow-inner"
-                          title="置空对应关系对照字典"
+                          className="px-3 py-1.5 bg-violet-900 hover:bg-violet-800 text-violet-300 hover:text-white rounded-xl text-xs font-bold transition-colors"
+                          title="Clear dictionary"
                         >
-                          清除
+                          Clear (清除)
                         </button>
                       </div>
                     </div>
                   </div>
                 )}
 
-                {/* 云端数据源库 - 支持其他终端或浏览器一键同步与备份下载 */}
-                <div className="mt-4 pt-4 border-t border-slate-100">
-                  <div className="flex items-center justify-between mb-3">
+                {/* Cloud Model Library */}
+                <div className="mt-2 pt-3 border-t border-slate-100">
+                  <div className="flex items-center justify-between mb-2">
                     <div className="flex items-center gap-1.5">
                       <Cloud className="w-3.5 h-3.5 text-indigo-500" />
-                      <p className="text-[11px] font-bold text-slate-500 uppercase tracking-wider">
-                        云端共享对照模型库 ({cloudMappings.length})
+                      <p className="text-[10px] font-bold text-slate-500 uppercase tracking-wider">
+                        Cloud Models / 云端共享库 ({cloudMappings.length})
                       </p>
                     </div>
                     <button 
                       onClick={() => fetchCloudMappings(false)} 
                       className="text-slate-400 hover:text-slate-600 transition-colors p-1 rounded-lg"
-                      title="手动拉取云端最新纪录"
+                      title="Refresh"
                     >
                       <RefreshCw className={cn("w-3.5 h-3.5", isCloudLoading && "animate-spin")} />
                     </button>
                   </div>
 
                   {isCloudLoading && cloudMappings.length === 0 ? (
-                    <div className="py-4 text-center text-xs text-slate-400 flex items-center justify-center gap-2">
+                    <div className="py-3 text-center text-[10px] text-slate-400 flex items-center justify-center gap-1.5">
                       <Loader2 className="w-3.5 h-3.5 animate-spin text-indigo-500" />
-                      正在极速拉取云端名录...
+                      Loading cloud models...
                     </div>
                   ) : cloudMappings.length === 0 ? (
-                    <div className="py-4 text-center text-[11px] text-slate-400 bg-slate-50/50 rounded-2xl border border-dashed border-slate-100">
-                      ☁️ 尚无任何云端共享对照。请在上方导入本地 Excel 字典，点击“发布至云端数据库”实现全网多客户端同步共享。
+                    <div className="py-3 text-center text-[10px] text-slate-400 bg-slate-50 rounded-xl border border-dashed border-slate-200">
+                      No cloud models yet (暂无云端共享对照)
                     </div>
                   ) : (
-                    <div className="space-y-2 max-h-[180px] overflow-y-auto pr-1 select-none">
+                    <div className="space-y-1.5 max-h-[150px] overflow-y-auto pr-1 select-none">
                       {cloudMappings.map((item) => (
                         <div 
                           key={item.id} 
                           className={cn(
-                            "group p-2.5 rounded-xl border transition-all text-[11px] flex items-center justify-between gap-2",
+                            "group p-2 rounded-xl border transition-all text-[10px] flex items-center justify-between gap-2",
                             mappingFileName === item.mappingFileName 
-                              ? "bg-indigo-50/40 border-indigo-200" 
-                              : "bg-slate-50/60 hover:bg-slate-50 border-slate-100 hover:border-slate-200"
+                              ? "bg-indigo-50/50 border-indigo-200" 
+                              : "bg-slate-50/70 hover:bg-slate-50 border-slate-100 hover:border-slate-200"
                           )}
                         >
                           <div className="min-w-0 flex-1">
-                            <div className="flex items-center gap-1.5">
-                              <span className="font-bold text-slate-700 truncate block max-w-[130px]" title={item.mappingFileName}>
-                                {item.mappingFileName}
-                              </span>
-                              {mappingFileName === item.mappingFileName && (
-                                <span className="text-[8px] bg-indigo-100 text-indigo-700 px-1 py-0.2 rounded font-bold shrink-0">
-                                  当前装载
-                                </span>
-                              )}
-                            </div>
-                            <div className="text-[10px] text-slate-400 mt-0.5 flex items-center gap-1 font-mono">
-                              <span>规则: <b>{item.count}</b> 条</span>
+                            <span className="font-bold text-slate-700 truncate block max-w-[130px]" title={item.mappingFileName}>
+                              {item.mappingFileName}
+                            </span>
+                            <div className="text-[9px] text-slate-400 mt-0.5 flex items-center gap-1 font-mono">
+                              <span>{item.count} rules</span>
                               <span>•</span>
-                              <span>{item.updatedAt ? new Date(item.updatedAt).toLocaleDateString() : '未知'}</span>
+                              <span>{item.updatedAt ? new Date(item.updatedAt).toLocaleDateString() : '-'}</span>
                             </div>
                           </div>
 
                           <div className="flex items-center gap-1 shrink-0">
                             <button
                               onClick={() => applyCloudMapping(item)}
-                              className="px-2 py-1 bg-white hover:bg-indigo-50 text-indigo-600 hover:text-indigo-700 rounded-lg border border-slate-200 hover:border-indigo-200 font-bold text-[10px] transition-all duration-200 hover:shadow-sm"
-                              title="应用此云端模板数据到分析"
+                              className="px-2 py-0.5 bg-white hover:bg-indigo-50 text-indigo-600 rounded border border-slate-200 font-bold text-[9px] transition-all"
                             >
-                              一键导入
+                              Load (载入)
                             </button>
                             <button
                               onClick={() => downloadCloudMappingAsExcel(item)}
-                              className="p-1 px-1.5 bg-white hover:bg-amber-50 text-amber-600 hover:text-amber-700 rounded-lg border border-slate-200 hover:border-amber-200 text-[10px] transition-all duration-200"
-                              title="下载此云端模组的 Excel 对照源表"
+                              className="p-1 bg-white hover:bg-amber-50 text-amber-600 rounded border border-slate-200 text-[9px] transition-all"
+                              title="Download Excel"
                             >
-                              <CloudDownload className="w-3.5 h-3.5" />
+                              <CloudDownload className="w-3 h-3" />
                             </button>
                           </div>
                         </div>
@@ -2745,39 +2706,27 @@ export default function App() {
               </div>
 
               {/* Requirements Guidelines */}
-              <div className="bg-white p-7 rounded-3xl border border-slate-200 shadow-sm relative overflow-hidden group">
-                <div className="absolute top-0 right-0 w-24 h-24 bg-blue-50 rounded-full -mr-12 -mt-12 group-hover:scale-110 transition-transform duration-700 opacity-60" />
-                <h3 className="text-xs font-bold uppercase tracking-widest text-slate-400 mb-6 flex items-center gap-2">
-                  <MapPin className="w-3 h-3" />
-                  Excel 格式要求指引
+              <div className="bg-white p-6 rounded-3xl border border-slate-200 shadow-sm relative overflow-hidden group">
+                <h3 className="text-xs font-bold uppercase tracking-wider text-slate-600 mb-4 flex items-center gap-2">
+                  <MapPin className="w-3.5 h-3.5 text-blue-500" />
+                  Format Specs (规范指引)
                 </h3>
-                <div className="space-y-4">
-                  <div className="p-3 bg-slate-50 rounded-2xl border border-slate-100">
-                    <span className="text-[10px] font-bold text-blue-600 uppercase block mb-1">库存源数据列名需包含：</span>
-                    <ul className="text-[10px] text-slate-500 list-disc list-inside space-y-0.5">
-                      <li><b>库位名称</b> (如 C36-1) 与 <b>箱号</b> (唯一标识符)</li>
-                      <li><b>J列 工单号</b>、<b>K列 箱等级</b>（仅保留 A 级）</li>
-                      <li><b>S列 箱条码数</b>：数值为 0 的行自动排除，不纳入统计</li>
-                      <li><b>功率档</b> (可选)</li>
-                    </ul>
+                <div className="space-y-3">
+                  <div className="p-3 bg-slate-50 rounded-2xl border border-slate-100 text-[10px] text-slate-600 space-y-1">
+                    <span className="font-bold text-blue-600 block">Inventory Excel (库存表):</span>
+                    <p>• <b>Col J</b>: Order No. (工单号)</p>
+                    <p>• <b>Col K</b>: Box Grade (箱等级，取 A 级)</p>
+                    <p>• <b>Col S</b>: Barcodes (箱条码数，自动过滤 0)</p>
                   </div>
-                  <div className="p-3 bg-slate-50 rounded-2xl border border-slate-100">
-                    <span className="text-[10px] font-bold text-violet-600 block mb-1">对照关系表列名需包含：</span>
-                    <ul className="text-[10px] text-slate-500 list-disc list-inside space-y-0.5">
-                      <li>含有 <b>工单/销售单</b> 关键字的列</li>
-                      <li>含有 <b>客户/Client</b> 关键字的列</li>
-                    </ul>
+                  <div className="p-3 bg-slate-50 rounded-2xl border border-slate-100 text-[10px] text-slate-600 space-y-1">
+                    <span className="font-bold text-violet-600 block">Mapping Excel (对照表):</span>
+                    <p>• <b>Col B</b>: Order / Sales No. (工单/销售单)</p>
+                    <p>• <b>Col F</b>: Customer Name (客户简称/名称)</p>
                   </div>
-                  <div className="p-3 bg-slate-50 rounded-2xl border border-slate-100">
-                    <span className="text-[10px] font-bold text-emerald-600 block mb-1">系统全量库位基准与排序规则：</span>
-                    <p className="text-[10px] text-slate-500 leading-relaxed mb-1">
-                      预设基准序列严格按如下次序初始化与导出：
-                    </p>
-                    <p className="text-[9px] font-mono text-slate-700 leading-relaxed bg-white p-2 rounded-lg border border-slate-200">
-                      C00~C60 → D00~D60 → E00~E60 → F00~F60 → G00~G60 → H00~H60 → K00~K35 → L00~L35 → M00~M35 → N00~N35 → O00~O35 → WA → WE1~WE5 → WF1~WF5 → WG1~WG5 → TBD
-                    </p>
-                    <p className="text-[10px] text-slate-500 leading-relaxed mt-1">
-                      基准库位无论是否有货均生成独立行（无货显示 0）。若盘点表中存在不在上述范围内的库位且存有物品，将自动汇总统一列在最末尾展示。
+                  <div className="p-3 bg-slate-50 rounded-2xl border border-slate-100 text-[9px] text-slate-500 space-y-1">
+                    <span className="font-bold text-emerald-600 block text-[10px]">Location Order (基准序列):</span>
+                    <p className="font-mono text-slate-700 bg-white p-1.5 rounded border border-slate-200 leading-relaxed">
+                      C00~H60 → K00~O35 → WA → WE~WG → TBD
                     </p>
                   </div>
                 </div>
@@ -2797,60 +2746,60 @@ export default function App() {
                     className="bg-white rounded-3xl p-6 border border-slate-200 shadow-sm"
                   >
                     <div className="flex flex-col gap-4">
-                      <div className="flex items-center justify-between pb-4 border-b border-slate-50">
-                        <h4 className="text-sm font-bold text-slate-800 flex items-center gap-2">
+                      <div className="flex items-center justify-between pb-3 border-b border-slate-100">
+                        <h4 className="text-xs font-bold uppercase tracking-wider text-slate-700 flex items-center gap-2">
                           <BarChart3 className="w-4 h-4 text-blue-500" />
-                          库存概览
+                          Overview (库存概览)
                         </h4>
-                        <div className="flex gap-2">
+                        <div className="flex gap-1.5">
                           <span className="px-2 py-0.5 bg-blue-50 text-blue-600 text-[10px] font-bold rounded-full">
-                            库位: {results.length}
+                            Locs: {results.length}
                           </span>
                           {results.some(r => !PREDEFINED_LOCATION_SET.has(r['库位名称'])) && (
                             <span className="px-2 py-0.5 bg-amber-50 text-amber-700 text-[10px] font-bold rounded-full border border-amber-200">
-                              含范围外有货: {results.filter(r => !PREDEFINED_LOCATION_SET.has(r['库位名称'])).length}
+                              Extra: {results.filter(r => !PREDEFINED_LOCATION_SET.has(r['库位名称'])).length}
                             </span>
                           )}
                         </div>
                       </div>
                       
-                      <div className="grid grid-cols-2 gap-4">
+                      <div className="grid grid-cols-2 gap-3">
                         <div className="bg-slate-50 rounded-2xl p-3">
-                          <div className="text-[10px] text-slate-400 font-bold mb-1">当前箱号总数</div>
-                          <div className="text-lg font-black text-slate-900">
+                          <div className="text-[10px] text-slate-400 font-bold mb-0.5">Total Boxes (当前箱数)</div>
+                          <div className="text-lg font-black text-slate-900 font-mono">
                             {results.reduce((acc, curr) => acc + curr['箱号数量'], 0)}
                           </div>
                         </div>
                         <div className="bg-emerald-50 rounded-2xl p-3">
-                          <div className="text-[10px] text-emerald-600 font-bold mb-1">剩余可入位</div>
-                          <div className="text-lg font-black text-emerald-700">
+                          <div className="text-[10px] text-emerald-600 font-bold mb-0.5">Avail Space (剩余位)</div>
+                          <div className="text-lg font-black text-emerald-700 font-mono">
                             {results.reduce((acc, curr) => acc + (curr['可入库数量'] > 0 ? curr['可入库数量'] : 0), 0)}
                           </div>
                         </div>
                       </div>
 
-                      <div className="space-y-2">
+                      <div className="space-y-1.5">
                         <div className="flex items-center justify-between text-[10px] font-bold">
                           <span className="text-slate-400 uppercase tracking-wider flex items-center gap-1">
                             <CheckCircle2 className="w-3 h-3 text-emerald-500" />
-                            完整可用库位 ({results.filter(r => r['箱号数量'] === 0).length})
+                            Empty Locations / 空置库位 ({results.filter(r => r['箱号数量'] === 0).length})
                           </span>
                         </div>
-                        <div className="max-h-16 overflow-y-auto pr-2 scrollbar-thin flex flex-wrap gap-1.5 text-[9px]">
+                        <div className="max-h-16 overflow-y-auto pr-1 scrollbar-thin flex flex-wrap gap-1.5 text-[9px]">
                           {results.filter(r => r['箱号数量'] === 0).length > 0 ? (
                             results.filter(r => r['箱号数量'] === 0).map(r => (
                               <button 
                                 key={r['库位名称']} 
                                 onClick={() => generateLabelsPDF(r['库位名称'])}
-                                className="px-2 py-0.5 bg-white text-slate-500 rounded-md border border-slate-200 font-mono shadow-sm hover:border-emerald-400 hover:text-emerald-600 hover:shadow-md transition-all active:scale-95 group/tag inline-flex items-center gap-1"
-                                title="点击生成 PDF 标签"
+                                className="px-2 py-0.5 bg-white text-slate-600 rounded-md border border-slate-200 font-mono shadow-sm hover:border-emerald-400 hover:text-emerald-600 transition-all active:scale-95 group/tag inline-flex items-center gap-1"
+                                title="Print Label (打印标签)"
                               >
                                 {r['库位名称']}
                                 <FileText className="w-2.5 h-2.5 opacity-0 group-hover/tag:opacity-100 transition-opacity" />
                               </button>
                             ))
                           ) : (
-                            <span className="text-slate-400 italic">暂无空置库位</span>
+                            <span className="text-slate-400 italic">No empty locations / 无空置库位</span>
                           )}
                         </div>
                       </div>
@@ -2864,43 +2813,43 @@ export default function App() {
                     transition={{ delay: 0.2 }}
                     className={cn(
                       "rounded-3xl p-6 border shadow-sm",
-                      mixedPowerAlerts.length > 0 ? "bg-red-50 border-red-100" : "bg-white border-slate-200"
+                      mixedPowerAlerts.length > 0 ? "bg-red-50/70 border-red-100" : "bg-white border-slate-200"
                     )}
                   >
-                    <div className="flex items-center justify-between mb-4">
+                    <div className="flex items-center justify-between mb-3">
                       <div className="flex items-center gap-2">
-                        <h4 className="text-sm font-bold flex items-center gap-2 text-nowrap">
+                        <h4 className="text-xs font-bold uppercase tracking-wider flex items-center gap-1.5 text-slate-700">
                           <AlertCircle className={cn("w-4 h-4", mixedPowerAlerts.length > 0 ? "text-red-500" : "text-slate-400")} />
-                          功率混档监测
+                          Mixed Power (功率混档)
                         </h4>
                         {mixedPowerAlerts.length > 0 && (
                           <button 
                             onClick={exportAlertsToExcel}
-                            className="p-1.5 hover:bg-red-100 text-red-600 rounded-lg transition-colors group/btn"
-                            title="导出混档异常"
+                            className="p-1 hover:bg-red-100 text-red-600 rounded-lg transition-colors"
+                            title="Export Mixed Power Report"
                           >
                             <Download className="w-3.5 h-3.5" />
                           </button>
                         )}
                       </div>
-                      <span className={cn("text-xl font-black", mixedPowerAlerts.length > 0 ? "text-red-600" : "text-slate-400")}>
+                      <span className={cn("text-lg font-black font-mono", mixedPowerAlerts.length > 0 ? "text-red-600" : "text-slate-400")}>
                         {mixedPowerAlerts.length}
                       </span>
                     </div>
-                    <div className="max-h-24 overflow-y-auto pr-2 scrollbar-thin">
+                    <div className="max-h-24 overflow-y-auto pr-1 scrollbar-thin">
                       {mixedPowerAlerts.length > 0 ? (
-                        <div className="space-y-3">
+                        <div className="space-y-2">
                           {mixedPowerAlerts.map((alert, i) => (
-                            <div key={i} className="flex flex-col p-3 bg-white rounded-xl border border-red-200 text-[10px] shadow-sm">
-                              <div className="font-bold text-slate-800 mb-2 flex items-center gap-1">
+                            <div key={i} className="flex flex-col p-2.5 bg-white rounded-xl border border-red-200 text-[10px] shadow-sm">
+                              <div className="font-bold text-slate-800 mb-1 flex items-center gap-1 font-mono">
                                 <Box className="w-3 h-3 text-red-400" />
                                 {alert.location}
                               </div>
-                              <div className="space-y-1">
+                              <div className="space-y-0.5">
                                 {Object.keys(alert.powerDetails).map(p => (
                                   <div key={p} className="flex items-center justify-between text-slate-500">
-                                    <span>功率 {p}</span>
-                                    <span className="font-mono text-red-600 bg-red-50 px-1.5 rounded">{alert.powerDetails[p].length}箱</span>
+                                    <span>Power {p}</span>
+                                    <span className="font-mono text-red-600 bg-red-50 px-1 rounded">{alert.powerDetails[p].length} boxes</span>
                                   </div>
                                 ))}
                               </div>
@@ -2908,7 +2857,7 @@ export default function App() {
                           ))}
                         </div>
                       ) : (
-                        <p className="text-slate-400 text-xs italic">库位功率一致性良好</p>
+                        <p className="text-slate-400 text-xs italic">Power classes consistent / 功率一致</p>
                       )}
                     </div>
                   </motion.div>
@@ -2920,58 +2869,45 @@ export default function App() {
                     transition={{ delay: 0.3 }}
                     className={cn(
                       "rounded-3xl p-6 border shadow-sm",
-                      mixedCustomerAlerts.length > 0 ? "bg-blue-50 border-blue-100" : "bg-white border-slate-200"
+                      mixedCustomerAlerts.length > 0 ? "bg-blue-50/70 border-blue-100" : "bg-white border-slate-200"
                     )}
                   >
-                    <div className="flex items-center justify-between mb-4">
+                    <div className="flex items-center justify-between mb-3">
                       <div className="flex items-center gap-2">
-                        <h4 className="text-sm font-bold flex items-center gap-2 text-nowrap">
+                        <h4 className="text-xs font-bold uppercase tracking-wider flex items-center gap-1.5 text-slate-700">
                           <History className={cn("w-4 h-4", mixedCustomerAlerts.length > 0 ? "text-blue-500" : "text-slate-400")} />
-                          客户混载监测
+                          Mixed Customer (客户混载)
                         </h4>
                         {mixedCustomerAlerts.length > 0 && (
                           <button 
                             onClick={exportCustomerAlertsToExcel}
-                            className="p-1.5 hover:bg-blue-100 text-blue-600 rounded-lg transition-colors group/btn"
-                            title="导出客户混载"
+                            className="p-1 hover:bg-blue-100 text-blue-600 rounded-lg transition-colors"
+                            title="Export Mixed Customer Report"
                           >
                             <Download className="w-3.5 h-3.5" />
                           </button>
                         )}
                       </div>
-                      <span className={cn("text-xl font-black", mixedCustomerAlerts.length > 0 ? "text-blue-600" : "text-slate-400")}>
+                      <span className={cn("text-lg font-black font-mono", mixedCustomerAlerts.length > 0 ? "text-blue-600" : "text-slate-400")}>
                         {mixedCustomerAlerts.length}
                       </span>
                     </div>
-                    <div className="max-h-24 overflow-y-auto pr-2 scrollbar-thin">
+                    <div className="max-h-24 overflow-y-auto pr-1 scrollbar-thin">
                       {mixedCustomerAlerts.length > 0 ? (
-                        <div className="space-y-3">
+                        <div className="space-y-2">
                           {mixedCustomerAlerts.map((alert, i) => (
-                            <div key={i} className="flex flex-col p-3 bg-white rounded-xl border border-blue-200 text-[10px] shadow-sm">
-                              <div className="font-bold text-slate-800 mb-2 flex items-center gap-1">
+                            <div key={i} className="flex flex-col p-2.5 bg-white rounded-xl border border-blue-200 text-[10px] shadow-sm">
+                              <div className="font-bold text-slate-800 mb-1 flex items-center gap-1 font-mono">
                                 <Package className="w-3 h-3 text-blue-400" />
                                 {alert.location}
                               </div>
-                              <div className="space-y-2 divide-y divide-blue-100/50">
+                              <div className="space-y-1 divide-y divide-blue-100/50">
                                 {Object.keys(alert.customerDetails).map(c => {
                                   const boxes = alert.customerDetails[c];
-                                  const uniquePowers = Array.from(new Set(boxes.map(b => b.power))).join(', ');
                                   return (
-                                    <div 
-                                      key={c} 
-                                      className="flex flex-col gap-1 pt-1.5 first:pt-0" 
-                                      title={boxes.map(b => `箱号: ${b.boxNo} (功率: ${b.power})`).join('\n')}
-                                    >
-                                      <div className="flex items-center justify-between text-slate-500">
-                                        <span className="truncate max-w-[130px] font-bold text-slate-700" title={c}>{c}</span>
-                                        <span className="font-mono text-blue-600 bg-blue-50 px-1.5 rounded shrink-0">{boxes.length}箱</span>
-                                      </div>
-                                      <div className="flex items-center gap-1.5 text-[9px] text-slate-400">
-                                        <span>包含功率:</span>
-                                        <span className="font-mono font-medium text-slate-500 bg-slate-50 px-1 rounded truncate max-w-[180px]" title={uniquePowers}>
-                                          {uniquePowers}
-                                        </span>
-                                      </div>
+                                    <div key={c} className="flex items-center justify-between text-slate-500 pt-0.5 first:pt-0">
+                                      <span className="truncate max-w-[120px] font-bold text-slate-700" title={c}>{c}</span>
+                                      <span className="font-mono text-blue-600 bg-blue-50 px-1 rounded">{boxes.length} boxes</span>
                                     </div>
                                   );
                                 })}
@@ -2980,7 +2916,7 @@ export default function App() {
                           ))}
                         </div>
                       ) : (
-                        <p className="text-slate-400 text-xs italic">库位客户单一，未发现混载</p>
+                        <p className="text-slate-400 text-xs italic">Single customer per location / 无混载</p>
                       )}
                     </div>
                   </motion.div>
@@ -2989,59 +2925,56 @@ export default function App() {
 
               {/* Main Detail Table */}
               <div className="bg-white rounded-3xl border border-slate-200 shadow-sm overflow-hidden flex flex-col flex-1">
-                <div className="p-6 border-b border-slate-100 flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between bg-white z-20">
+                <div className="p-5 border-b border-slate-100 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between bg-white z-20">
                   <div>
-                    <h3 className="font-bold text-xl text-slate-900 tracking-tight">分析明细看板</h3>
-                    <p className="text-xs text-slate-400 font-medium">
-                      {activeTab === 'location' ? '统计并展示各库位上的箱号负载与余位数量（标准18箱，H库位首选14箱）' : 
-                       activeTab === 'customer' ? '对照翻译显示各客户包含的总箱数及库位分布' : 
-                       activeTab === 'correction' ? '依据库位主属性，推荐混合存放的箱子应转移调整的最佳目的库位' :
-                       '来源于原始数据K列箱等级的非A级别品（B、F、R）统计与独立导出'}
-                    </p>
+                    <h3 className="font-bold text-lg text-slate-900 tracking-tight flex items-center gap-2">
+                      <span>Analytics Dashboard</span>
+                      <span className="text-xs font-normal text-slate-400">(明细看板)</span>
+                    </h3>
                   </div>
 
-                  <div className="flex items-center gap-4 self-start sm:self-auto">
+                  <div className="flex items-center gap-3 self-start sm:self-auto">
                     {/* Tab Segment Controller */}
                     <div className="flex bg-slate-100 p-1 rounded-xl">
                       <button 
                         onClick={() => setActiveTab('location')}
                         className={cn(
-                          "px-4 py-1.5 text-xs font-bold rounded-lg transition-all flex items-center gap-1.5",
-                          activeTab === 'location' ? "bg-white text-slate-950 shadow-sm" : "text-slate-550 hover:text-slate-900"
+                          "px-3 py-1.5 text-xs font-bold rounded-lg transition-all flex items-center gap-1.5",
+                          activeTab === 'location' ? "bg-white text-slate-950 shadow-sm" : "text-slate-500 hover:text-slate-900"
                         )}
                       >
                         <MapPin className="w-3.5 h-3.5" />
-                        按库位
+                        By Location (库位)
                       </button>
                       <button 
                         onClick={() => setActiveTab('customer')}
                         className={cn(
-                          "px-4 py-1.5 text-xs font-bold rounded-lg transition-all flex items-center gap-1.5",
-                          activeTab === 'customer' ? "bg-white text-slate-950 shadow-sm" : "text-slate-550 hover:text-slate-900"
+                          "px-3 py-1.5 text-xs font-bold rounded-lg transition-all flex items-center gap-1.5",
+                          activeTab === 'customer' ? "bg-white text-slate-950 shadow-sm" : "text-slate-500 hover:text-slate-900"
                         )}
                       >
                         <Package className="w-3.5 h-3.5" />
-                        按客户
+                        By Customer (客户)
                       </button>
                       <button 
                         onClick={() => setActiveTab('correction')}
                         className={cn(
-                          "px-4 py-1.5 text-xs font-bold rounded-lg transition-all flex items-center gap-1.5 whitespace-nowrap",
-                          activeTab === 'correction' ? "bg-white text-slate-950 shadow-sm" : "text-slate-550 hover:text-slate-900"
+                          "px-3 py-1.5 text-xs font-bold rounded-lg transition-all flex items-center gap-1.5 whitespace-nowrap",
+                          activeTab === 'correction' ? "bg-white text-slate-950 shadow-sm" : "text-slate-500 hover:text-slate-900"
                         )}
                       >
                         <ShieldAlert className="w-3.5 h-3.5 text-amber-500" />
-                        错误修正建议
+                        Relocation Plan (纠偏)
                       </button>
                       <button 
                         onClick={() => setActiveTab('nonA')}
                         className={cn(
-                          "px-4 py-1.5 text-xs font-bold rounded-lg transition-all flex items-center gap-1.5 whitespace-nowrap relative",
-                          activeTab === 'nonA' ? "bg-purple-600 text-white shadow-sm" : "text-slate-550 hover:text-slate-900"
+                          "px-3 py-1.5 text-xs font-bold rounded-lg transition-all flex items-center gap-1.5 whitespace-nowrap relative",
+                          activeTab === 'nonA' ? "bg-purple-600 text-white shadow-sm" : "text-slate-500 hover:text-slate-900"
                         )}
                       >
                         <Layers className="w-3.5 h-3.5" />
-                        非A级品 (B/F/R)
+                        Non-A Grade (非A级)
                         {nonAGradeList.length > 0 && (
                           <span className={cn(
                             "px-1.5 py-0.2 rounded-full text-[9px] font-mono font-bold ml-0.5",
@@ -3057,8 +2990,8 @@ export default function App() {
                       (activeTab === 'customer' && customerStats.length > 0) || 
                       (activeTab === 'correction' && relocationSuggestions.length > 0) ||
                       (activeTab === 'nonA' && nonAGradeList.length > 0)) && (
-                      <div className="flex items-center gap-3">
-                        <div className="w-px h-8 bg-slate-100 hidden sm:block" />
+                      <div className="flex items-center gap-2">
+                        <div className="w-px h-6 bg-slate-200 hidden sm:block" />
                         <button 
                           onClick={
                             activeTab === 'location' ? exportToExcel : 
@@ -3067,41 +3000,41 @@ export default function App() {
                             exportNonAGradeToExcel
                           }
                           className={cn(
-                            "p-2.5 rounded-xl border transition-colors flex items-center gap-1.5 shrink-0 text-xs font-bold shadow-sm",
+                            "px-3 py-1.5 rounded-xl border transition-colors flex items-center gap-1.5 shrink-0 text-xs font-bold shadow-sm",
                             activeTab === 'nonA'
                               ? "bg-purple-600 hover:bg-purple-500 text-white border-purple-600"
                               : "bg-slate-50 hover:bg-slate-100 text-slate-700 border-slate-200"
                           )}
-                          title={activeTab === 'nonA' ? "单独导出非A级品(B、F、R)统计报表" : "导出当前分表为 Excel"}
+                          title="Export Current View to Excel"
                         >
-                          <Download className="w-4 h-4" />
-                          <span>{activeTab === 'nonA' ? '单独导出非A级品 (Excel)' : '导出 Excel'}</span>
+                          <Download className="w-3.5 h-3.5" />
+                          <span>Export Excel (导出)</span>
                         </button>
                       </div>
                     )}
                   </div>
                 </div>
 
-                {/* 非A级别品专属统计与过滤工具条 */}
+                {/* Non-A Grade Filter Bar */}
                 {activeTab === 'nonA' && (
-                  <div className="bg-purple-50/70 border-b border-purple-100/80 px-6 py-3 flex flex-col md:flex-row md:items-center justify-between gap-3 shrink-0">
-                    <div className="flex items-center flex-wrap gap-2">
-                      <span className="text-[11px] font-bold text-purple-900 flex items-center gap-1.5 mr-2">
-                        <Filter className="w-3.5 h-3.5 text-purple-600" />
-                        品级筛选:
+                  <div className="bg-purple-50/70 border-b border-purple-100 px-6 py-2.5 flex flex-col md:flex-row md:items-center justify-between gap-2.5 shrink-0">
+                    <div className="flex items-center flex-wrap gap-1.5">
+                      <span className="text-[10px] font-bold text-purple-900 flex items-center gap-1 mr-1">
+                        <Filter className="w-3 h-3 text-purple-600" />
+                        Grade Filter (品级):
                       </span>
                       {[
-                        { id: 'ALL', label: `全部 (${nonAGradeList.length})` },
-                        { id: 'B', label: `B 级品 (${nonAGradeList.filter(x => x.grade === 'B').length})` },
-                        { id: 'F', label: `F 级品 (${nonAGradeList.filter(x => x.grade === 'F').length})` },
-                        { id: 'R', label: `R 级品 (${nonAGradeList.filter(x => x.grade === 'R').length})` },
-                        { id: 'OTHER', label: `其它 (${nonAGradeList.filter(x => !['B','F','R'].includes(x.grade)).length})` },
+                        { id: 'ALL', label: `All (${nonAGradeList.length})` },
+                        { id: 'B', label: `Grade B (${nonAGradeList.filter(x => x.grade === 'B').length})` },
+                        { id: 'F', label: `Grade F (${nonAGradeList.filter(x => x.grade === 'F').length})` },
+                        { id: 'R', label: `Grade R (${nonAGradeList.filter(x => x.grade === 'R').length})` },
+                        { id: 'OTHER', label: `Other (${nonAGradeList.filter(x => !['B','F','R'].includes(x.grade)).length})` },
                       ].map((pill) => (
                         <button
                           key={pill.id}
                           onClick={() => setNonAGradeFilter(pill.id as any)}
                           className={cn(
-                            "px-2.5 py-1 text-xs font-bold rounded-lg border transition-all",
+                            "px-2.5 py-0.5 text-xs font-bold rounded-lg border transition-all",
                             nonAGradeFilter === pill.id
                               ? "bg-purple-700 text-white border-purple-700 shadow-sm"
                               : "bg-white text-slate-600 border-purple-200 hover:bg-purple-100/60"
@@ -3114,22 +3047,22 @@ export default function App() {
 
                     <div className="flex items-center gap-2">
                       <div className="relative">
-                        <Search className="w-3.5 h-3.5 text-purple-400 absolute left-2.5 top-1/2 -translate-y-1/2" />
+                        <Search className="w-3 h-3 text-purple-400 absolute left-2.5 top-1/2 -translate-y-1/2" />
                         <input
                           type="text"
-                          placeholder="搜索箱号/库位/工单/客户/等级..."
+                          placeholder="Search box, loc, order, client... (搜索)"
                           value={nonAGradeSearch}
                           onChange={(e) => setNonAGradeSearch(e.target.value)}
-                          className="pl-8 pr-3 py-1.5 text-xs bg-white rounded-lg border border-purple-200 focus:outline-none focus:ring-2 focus:ring-purple-500 w-56 placeholder:text-slate-400"
+                          className="pl-8 pr-3 py-1 text-xs bg-white rounded-lg border border-purple-200 focus:outline-none focus:ring-2 focus:ring-purple-500 w-52 placeholder:text-slate-400"
                         />
                       </div>
                       <button
                         onClick={exportNonAGradeToExcel}
-                        className="px-3 py-1.5 bg-purple-600 hover:bg-purple-700 text-white text-xs font-bold rounded-lg transition-colors flex items-center gap-1 shrink-0 shadow-sm active:scale-95"
-                        title="单独导出非A级别品报表为 Excel"
+                        className="px-2.5 py-1 bg-purple-600 hover:bg-purple-700 text-white text-xs font-bold rounded-lg transition-colors flex items-center gap-1 shrink-0 shadow-sm"
+                        title="Export Non-A Excel"
                       >
-                        <Download className="w-3.5 h-3.5" />
-                        单独导出
+                        <Download className="w-3 h-3" />
+                        Export (导出)
                       </button>
                     </div>
                   </div>
@@ -3140,12 +3073,12 @@ export default function App() {
                     {activeTab === 'location' ? (
                       <>
                         <thead className="sticky top-0 bg-white/95 backdrop-blur-sm z-10 border-b border-slate-100 shadow-sm shadow-slate-100/50">
-                          <tr className="text-left">
-                            <th className="pl-8 pr-4 py-5 text-[10px] font-bold text-slate-400 uppercase tracking-[0.2em] w-16">顺序</th>
-                            <th className="px-6 py-5 text-[10px] font-bold text-slate-400 uppercase tracking-[0.2em]">库位名称</th>
-                            <th className="px-6 py-5 text-[10px] font-bold text-slate-400 uppercase tracking-[0.2em]">大部分存放客户与功率</th>
-                            <th className="px-6 py-5 text-[10px] font-bold text-slate-400 uppercase tracking-[0.2em] text-center">箱号数量</th>
-                            <th className="px-6 py-5 text-[10px] font-bold text-slate-400 uppercase tracking-[0.2em] text-right pr-12">可入库数量</th>
+                          <tr className="text-left text-slate-400 text-[10px] font-bold uppercase tracking-wider">
+                            <th className="pl-6 pr-3 py-4 w-14">No. (序号)</th>
+                            <th className="px-5 py-4">Location (库位)</th>
+                            <th className="px-5 py-4">Primary Cust & Power (主存客户/功率)</th>
+                            <th className="px-5 py-4 text-center">Box Qty / Cap (箱数/容量)</th>
+                            <th className="px-5 py-4 text-right pr-8">Avail Cap (可入容量)</th>
                           </tr>
                         </thead>
                         <tbody className="divide-y divide-slate-50">
@@ -3157,24 +3090,24 @@ export default function App() {
                                   key={i}
                                   initial={{ opacity: 0, y: 10 }}
                                   animate={{ opacity: 1, y: 0 }}
-                                  transition={{ delay: i * 0.015, duration: 0.3 }}
-                                  className="hover:bg-slate-50/50 transition-all duration-200 group"
+                                  transition={{ delay: i * 0.012, duration: 0.25 }}
+                                  className="hover:bg-slate-50/50 transition-all duration-200 group text-xs"
                                 >
-                                  <td className="pl-8 pr-4 py-4 text-[10px] font-mono font-bold text-slate-300 group-hover:text-blue-400 transition-colors">
+                                  <td className="pl-6 pr-3 py-3.5 font-mono font-bold text-slate-300 group-hover:text-blue-500 transition-colors">
                                     {String(i + 1).padStart(2, '0')}
                                   </td>
-                                  <td className="px-6 py-4">
-                                    <div className="flex items-center gap-3">
+                                  <td className="px-5 py-3.5">
+                                    <div className="flex items-center gap-2.5">
                                       <div className={cn(
-                                        "w-2 h-2 rounded-full scale-50 group-hover:scale-100 transition-all shrink-0",
-                                        row['箱号数量'] > capacity ? "bg-red-500 shadow-[0_0_8px_rgba(239,68,68,0.5)]" : 
-                                        row['箱号数量'] < capacity ? "bg-emerald-500 shadow-[0_0_8px_rgba(16,185,129,0.5)]" : 
-                                        "bg-slate-900 shadow-[0_0_8px_rgba(15,23,42,0.3)]"
+                                        "w-2 h-2 rounded-full shrink-0",
+                                        row['箱号数量'] > capacity ? "bg-red-500 shadow-[0_0_6px_rgba(239,68,68,0.5)]" : 
+                                        row['箱号数量'] < capacity ? "bg-emerald-500 shadow-[0_0_6px_rgba(16,185,129,0.5)]" : 
+                                        "bg-slate-700"
                                       )} />
                                       <div className="flex flex-col">
-                                        <div className="flex items-center gap-2">
+                                        <div className="flex items-center gap-1.5">
                                           <span className={cn(
-                                            "text-sm font-bold transition-colors",
+                                            "text-xs font-bold transition-colors font-mono",
                                             row['箱号数量'] > capacity ? "text-red-600" : 
                                             row['箱号数量'] < capacity ? "text-emerald-700" :
                                             "text-slate-900"
@@ -3182,44 +3115,40 @@ export default function App() {
                                             {row['库位名称']}
                                           </span>
                                           {!PREDEFINED_LOCATION_SET.has(row['库位名称']) && (
-                                            <span className="px-1.5 py-0.5 text-[9px] font-bold bg-amber-50 text-amber-700 rounded border border-amber-200">
-                                              范围外库位
+                                            <span className="px-1 py-0.2 text-[8px] font-bold bg-amber-50 text-amber-700 rounded border border-amber-200">
+                                              Extra
                                             </span>
                                           )}
                                         </div>
                                         {row['客户分布'] && Object.keys(row['客户分布']).length > 0 && (
-                                          <span className="text-[10px] text-slate-400 mt-0.5" title={
+                                          <span className="text-[9px] text-slate-400" title={
                                             Object.entries(row['客户分布'])
-                                              .map(([cust, count]) => `${cust} (${count}箱)`)
+                                              .map(([cust, count]) => `${cust} (${count})`)
                                               .join(', ')
                                           }>
-                                            客户分布: {
-                                              Object.entries(row['客户分布'])
-                                                .map(([cust, count]) => `${cust} (${count}箱)`)
-                                                .join(', ')
-                                            }
+                                            {Object.entries(row['客户分布']).map(([cust, count]) => `${cust} (${count})`).join(', ')}
                                           </span>
                                         )}
                                       </div>
                                     </div>
                                   </td>
-                                  <td className="px-6 py-4">
+                                  <td className="px-5 py-3.5">
                                     {row['主存客户'] !== '空置' ? (
-                                      <div className="flex flex-col gap-0.5">
-                                        <span className="text-xs font-bold text-slate-800 truncate max-w-[180px]" title={row['主存客户']}>
+                                      <div className="flex flex-col">
+                                        <span className="text-xs font-bold text-slate-800 truncate max-w-[160px]" title={row['主存客户']}>
                                           {row['主存客户']}
                                         </span>
-                                        <span className="text-[10px] text-slate-400 font-mono">
-                                          功率: {row['主存功率']}
+                                        <span className="text-[9px] text-slate-400 font-mono">
+                                          Power: {row['主存功率']}
                                         </span>
                                       </div>
                                     ) : (
-                                      <span className="text-xs text-slate-300 font-medium italic">空置</span>
+                                      <span className="text-xs text-slate-300 font-medium italic">Empty (空置)</span>
                                     )}
                                   </td>
-                                  <td className="px-6 py-4 text-center">
+                                  <td className="px-5 py-3.5 text-center">
                                     <span className={cn(
-                                      "text-sm font-mono font-bold tabular-nums px-3 py-1 rounded-full",
+                                      "text-xs font-mono font-bold px-2.5 py-0.5 rounded-full",
                                       row['箱号数量'] > capacity ? "bg-red-50 text-red-600" : 
                                       row['箱号数量'] < capacity ? "bg-emerald-50 text-emerald-600" : 
                                       "bg-slate-100 text-slate-900"
@@ -3227,11 +3156,11 @@ export default function App() {
                                       {row['箱号数量']} / {capacity}
                                     </span>
                                   </td>
-                                  <td className="px-6 py-4 text-right pr-12">
+                                  <td className="px-5 py-3.5 text-right pr-8">
                                     <span className={cn(
-                                      "text-sm font-mono font-bold tabular-nums transition-colors",
+                                      "text-xs font-mono font-bold",
                                       row['可入库数量'] < 0 ? "text-red-500" : 
-                                      row['可入库数量'] > 0 ? "text-emerald-500" : 
+                                      row['可入库数量'] > 0 ? "text-emerald-600" : 
                                       "text-slate-900"
                                     )}>
                                       {row['可入库数量'] > 0 ? `+${row['可入库数量']}` : row['可入库数量']}
@@ -3242,13 +3171,13 @@ export default function App() {
                             })
                           ) : (
                             <tr>
-                              <td colSpan={5} className="px-8 py-32 text-center">
+                              <td colSpan={5} className="px-8 py-24 text-center">
                                 <div className="flex flex-col items-center justify-center">
-                                  <div className="w-16 h-16 bg-slate-50 rounded-full flex items-center justify-center mb-4 text-slate-200">
-                                    <TableIcon className="w-8 h-8" />
+                                  <div className="w-12 h-12 bg-slate-50 rounded-full flex items-center justify-center mb-3 text-slate-300">
+                                    <TableIcon className="w-6 h-6" />
                                   </div>
-                                  <p className="text-sm font-bold text-slate-400 tracking-wide">等待分析文件载入...</p>
-                                  <p className="text-[10px] text-slate-300 uppercase font-medium mt-1">请上传包含箱号信息的库存 Excel</p>
+                                  <p className="text-xs font-bold text-slate-500">Awaiting inventory data (等待载入库存)</p>
+                                  <p className="text-[10px] text-slate-400 mt-0.5">Please upload your inventory Excel on the left</p>
                                 </div>
                               </td>
                             </tr>
@@ -3258,40 +3187,40 @@ export default function App() {
                     ) : activeTab === 'customer' ? (
                       <>
                         <thead className="sticky top-0 bg-white/95 backdrop-blur-sm z-10 border-b border-slate-100 shadow-sm shadow-slate-100/50">
-                          <tr className="text-left">
-                            <th className="pl-8 pr-4 py-5 text-[10px] font-bold text-slate-400 uppercase tracking-[0.2em] w-16">顺序</th>
-                            <th className="px-6 py-5 text-[10px] font-bold text-slate-400 uppercase tracking-[0.2em]">客户名称</th>
-                            <th className="px-6 py-5 text-[10px] font-bold text-slate-400 uppercase tracking-[0.2em] text-center">占箱数</th>
-                            <th className="px-6 py-5 text-[10px] font-bold text-slate-400 uppercase tracking-[0.2em] pr-12">占用库位明细</th>
+                          <tr className="text-left text-slate-400 text-[10px] font-bold uppercase tracking-wider">
+                            <th className="pl-6 pr-3 py-4 w-14">No. (序号)</th>
+                            <th className="px-5 py-4">Customer Name (客户名称)</th>
+                            <th className="px-5 py-4 text-center">Box Qty (占箱数)</th>
+                            <th className="px-5 py-4 pr-8">Occupied Locations (占用库位)</th>
                           </tr>
                         </thead>
-                        <tbody className="divide-y divide-slate-50">
+                        <tbody className="divide-y divide-slate-50 text-xs">
                           {customerStats.length > 0 ? (
                             customerStats.map((row, i) => (
                               <motion.tr 
                                 key={i}
                                 initial={{ opacity: 0, y: 10 }}
                                 animate={{ opacity: 1, y: 0 }}
-                                transition={{ delay: i * 0.015, duration: 0.3 }}
+                                transition={{ delay: i * 0.012, duration: 0.25 }}
                                 className="hover:bg-slate-50/50 transition-all duration-200 group"
                               >
-                                <td className="pl-8 pr-4 py-4 text-[10px] font-mono font-bold text-slate-300 group-hover:text-violet-400 transition-colors">
+                                <td className="pl-6 pr-3 py-3.5 font-mono font-bold text-slate-300 group-hover:text-violet-500 transition-colors">
                                   {String(i + 1).padStart(2, '0')}
                                 </td>
-                                <td className="px-6 py-4">
-                                  <span className="text-sm font-bold text-slate-900 block">
+                                <td className="px-5 py-3.5">
+                                  <span className="font-bold text-slate-900 block">
                                     {row.customerName}
                                   </span>
                                 </td>
-                                <td className="px-6 py-4 text-center">
-                                  <span className="text-sm font-mono font-bold bg-violet-50 text-violet-600 px-3 py-1 rounded-full border border-violet-100">
-                                    {row.boxCount} 箱
+                                <td className="px-5 py-3.5 text-center">
+                                  <span className="font-mono font-bold bg-violet-50 text-violet-700 px-2.5 py-0.5 rounded-full border border-violet-100">
+                                    {row.boxCount} Boxes
                                   </span>
                                 </td>
-                                <td className="px-6 py-4 pr-12">
-                                  <div className="flex flex-wrap gap-1.5 max-h-24 overflow-y-auto pr-1 text-nowrap">
+                                <td className="px-5 py-3.5 pr-8">
+                                  <div className="flex flex-wrap gap-1 max-h-20 overflow-y-auto pr-1">
                                     {row.locations.map(loc => (
-                                      <span key={loc} className="px-2 py-0.5 bg-slate-100 text-slate-600 text-[10px] font-mono rounded font-bold border border-slate-200">
+                                      <span key={loc} className="px-1.5 py-0.5 bg-slate-100 text-slate-600 text-[9px] font-mono rounded font-bold border border-slate-200">
                                         {loc}
                                       </span>
                                     ))}
@@ -3301,14 +3230,14 @@ export default function App() {
                             ))
                           ) : (
                             <tr>
-                              <td colSpan={4} className="px-8 py-32 text-center">
+                              <td colSpan={4} className="px-8 py-24 text-center">
                                 <div className="flex flex-col items-center justify-center max-w-sm mx-auto">
-                                  <div className="w-16 h-16 bg-violet-50 text-violet-500 rounded-full flex items-center justify-center mb-4">
-                                    <Package className="w-8 h-8" />
+                                  <div className="w-12 h-12 bg-violet-50 text-violet-500 rounded-full flex items-center justify-center mb-3">
+                                    <Package className="w-6 h-6" />
                                   </div>
-                                  <p className="text-sm font-bold text-slate-600">未发现客户关联统计数据</p>
-                                  <p className="text-xs text-slate-400 mt-2 leading-relaxed">
-                                    欲按“客户”维度归类分析箱数，请在左侧上传带有工单及客户信息的 <b>对照表</b>。系统支持在拖拽上传后实时计算并加载该明细视图。
+                                  <p className="text-xs font-bold text-slate-600">No customer mapping data (暂无客户映射)</p>
+                                  <p className="text-[10px] text-slate-400 mt-1">
+                                    Please upload Order-Customer Mapping Excel to link orders with customer names.
                                   </p>
                                 </div>
                               </td>
@@ -3320,58 +3249,58 @@ export default function App() {
                       <>
                         <thead className="sticky top-0 bg-white/95 backdrop-blur-sm z-10 border-b border-slate-100 shadow-sm shadow-slate-100/50">
                           <tr className="text-left text-slate-400 text-[10px] font-bold uppercase tracking-wider">
-                            <th className="pl-8 pr-4 py-5 w-16">顺序</th>
-                            <th className="px-6 py-5">不一致箱号</th>
-                            <th className="px-6 py-5 text-center">当前库位</th>
-                            <th className="px-6 py-5 text-left">该箱属性</th>
-                            <th className="px-6 py-5 text-left">库位主流 (以此为主)</th>
-                            <th className="px-6 py-5">不符类型</th>
-                            <th className="px-6 py-5 pr-12">推荐去向及原因</th>
+                            <th className="pl-6 pr-3 py-4 w-14">No. (序号)</th>
+                            <th className="px-5 py-4">Box No. (箱号)</th>
+                            <th className="px-5 py-4 text-center">Current Loc (当前库位)</th>
+                            <th className="px-5 py-4">Box Attr (该箱属性)</th>
+                            <th className="px-5 py-4">Dominant Attr (库位主流)</th>
+                            <th className="px-5 py-4">Mismatch (偏差)</th>
+                            <th className="px-5 py-4 pr-8">Target Loc & Reason (推荐去向与原因)</th>
                           </tr>
                         </thead>
-                        <tbody className="divide-y divide-slate-50 text-slate-700">
+                        <tbody className="divide-y divide-slate-50 text-slate-700 text-xs">
                           {relocationSuggestions.length > 0 ? (
                             relocationSuggestions.map((row, i) => (
                               <motion.tr 
                                 key={i}
                                 initial={{ opacity: 0, y: 10 }}
                                 animate={{ opacity: 1, y: 0 }}
-                                transition={{ delay: i * 0.012, duration: 0.25 }}
-                                className="hover:bg-slate-50/50 transition-all duration-200 group text-xs"
+                                transition={{ delay: i * 0.01, duration: 0.2 }}
+                                className="hover:bg-slate-50/50 transition-all duration-200 group"
                               >
-                                <td className="pl-8 pr-4 py-4 font-mono font-bold text-slate-300 group-hover:text-amber-500 transition-colors">
+                                <td className="pl-6 pr-3 py-3 font-mono font-bold text-slate-300 group-hover:text-amber-500 transition-colors">
                                   {String(i + 1).padStart(2, '0')}
                                 </td>
-                                <td className="px-6 py-4 font-bold text-slate-800 font-mono">
+                                <td className="px-5 py-3 font-bold text-slate-800 font-mono">
                                   {row.boxNo}
                                 </td>
-                                <td className="px-6 py-4 text-center font-bold text-slate-600 font-mono">
+                                <td className="px-5 py-3 text-center font-bold text-slate-600 font-mono">
                                   {row.currentLoc}
                                 </td>
-                                <td className="px-6 py-4 text-left">
-                                  <div className="flex flex-col space-y-0.5">
-                                    <span className="font-bold text-slate-800 truncate max-w-[130px] block" title={row.customerName}>{row.customerName}</span>
-                                    <span className="font-mono text-slate-450 text-[10px]">功率: {row.powerGrade}</span>
+                                <td className="px-5 py-3">
+                                  <div className="flex flex-col">
+                                    <span className="font-bold text-slate-800 truncate max-w-[120px]" title={row.customerName}>{row.customerName}</span>
+                                    <span className="font-mono text-slate-400 text-[9px]">P: {row.powerGrade}</span>
                                   </div>
                                 </td>
-                                <td className="px-6 py-4 text-left">
-                                  <div className="flex flex-col space-y-0.5">
-                                    <span className="font-bold text-blue-700 truncate max-w-[130px] block" title={row.dominantCustomer}>{row.dominantCustomer}</span>
-                                    <span className="font-mono text-blue-500 text-[10px]">功率: {row.dominantPower}</span>
+                                <td className="px-5 py-3">
+                                  <div className="flex flex-col">
+                                    <span className="font-bold text-blue-700 truncate max-w-[120px]" title={row.dominantCustomer}>{row.dominantCustomer}</span>
+                                    <span className="font-mono text-blue-500 text-[9px]">P: {row.dominantPower}</span>
                                   </div>
                                 </td>
-                                <td className="px-6 py-4">
-                                  <span className="inline-block px-2 py-0.5 font-bold text-[10px] rounded-md bg-amber-50 text-amber-700 border border-amber-200 text-nowrap">
+                                <td className="px-5 py-3">
+                                  <span className="inline-block px-1.5 py-0.5 font-bold text-[9px] rounded bg-amber-50 text-amber-700 border border-amber-200">
                                     {row.mismatchType}
                                   </span>
                                 </td>
-                                <td className="px-6 py-4 pr-12">
-                                  <div className="flex flex-col gap-0.5">
+                                <td className="px-5 py-3 pr-8">
+                                  <div className="flex flex-col">
                                     <span className="font-bold text-emerald-600 font-mono flex items-center gap-1">
-                                      <ArrowRight className="w-3.5 h-3.5" />
+                                      <ArrowRight className="w-3 h-3" />
                                       {row.recommendedLoc}
                                     </span>
-                                    <span className="text-[10px] text-slate-400 max-w-[280px]">
+                                    <span className="text-[9px] text-slate-400 max-w-xs">
                                       {row.recommendationReason}
                                     </span>
                                   </div>
@@ -3380,14 +3309,14 @@ export default function App() {
                             ))
                           ) : (
                             <tr>
-                              <td colSpan={7} className="px-8 py-32 text-center">
+                              <td colSpan={7} className="px-8 py-24 text-center">
                                 <div className="flex flex-col items-center justify-center max-w-sm mx-auto">
-                                  <div className="w-12 h-12 bg-emerald-50 text-emerald-500 rounded-full flex items-center justify-center mb-4">
+                                  <div className="w-12 h-12 bg-emerald-50 text-emerald-500 rounded-full flex items-center justify-center mb-3">
                                     <CheckCircle2 className="w-6 h-6" />
                                   </div>
-                                  <p className="text-sm font-bold text-slate-800">未检测到需要调整的混放箱</p>
-                                  <p className="text-xs text-slate-400 mt-2 leading-relaxed">
-                                    当前已有货存的所有库位均达到完美的一致性（单客户 + 单功率），不含任何非凡主属性的小部分异类箱子，无需修正调整！
+                                  <p className="text-xs font-bold text-slate-800">No mixed locations detected (未发现混存库位)</p>
+                                  <p className="text-[10px] text-slate-400 mt-1">
+                                    All current locations meet single-customer and single-power consistency.
                                   </p>
                                 </div>
                               </td>
@@ -3400,18 +3329,18 @@ export default function App() {
                       <>
                         <thead className="sticky top-0 bg-white/95 backdrop-blur-sm z-10 border-b border-purple-100 shadow-sm shadow-purple-50">
                           <tr className="text-left text-slate-400 text-[10px] font-bold uppercase tracking-wider">
-                            <th className="pl-8 pr-4 py-5 w-16">顺序</th>
-                            <th className="px-6 py-5">箱号</th>
-                            <th className="px-6 py-5 text-center">库位名称</th>
-                            <th className="px-6 py-5 text-center">箱等级 (K列原值)</th>
-                            <th className="px-6 py-5 text-center">等级归类</th>
-                            <th className="px-6 py-5 text-center">箱条码数 (S列)</th>
-                            <th className="px-6 py-5">工单号 (J列)</th>
-                            <th className="px-6 py-5">客户简称</th>
-                            <th className="px-6 py-5 pr-12 text-center">功率档</th>
+                            <th className="pl-6 pr-3 py-4 w-14">No. (序号)</th>
+                            <th className="px-5 py-4">Box No. (箱号)</th>
+                            <th className="px-5 py-4 text-center">Location (库位)</th>
+                            <th className="px-5 py-4 text-center">Raw Grade (Col K)</th>
+                            <th className="px-5 py-4 text-center">Category (归类)</th>
+                            <th className="px-5 py-4 text-center">Barcodes (Col S)</th>
+                            <th className="px-5 py-4">Order No. (Col J)</th>
+                            <th className="px-5 py-4">Customer (客户)</th>
+                            <th className="px-5 py-4 pr-8 text-center">Power (功率)</th>
                           </tr>
                         </thead>
-                        <tbody className="divide-y divide-slate-50 text-slate-700">
+                        <tbody className="divide-y divide-slate-50 text-slate-700 text-xs">
                           {filteredNonAGradeList.length > 0 ? (
                             filteredNonAGradeList.map((row, i) => (
                               <motion.tr 
@@ -3419,68 +3348,61 @@ export default function App() {
                                 initial={{ opacity: 0, y: 10 }}
                                 animate={{ opacity: 1, y: 0 }}
                                 transition={{ delay: i * 0.008, duration: 0.2 }}
-                                className="hover:bg-purple-50/40 transition-all duration-200 group text-xs"
+                                className="hover:bg-purple-50/40 transition-all duration-200 group"
                               >
-                                <td className="pl-8 pr-4 py-3.5 font-mono font-bold text-slate-300 group-hover:text-purple-600 transition-colors">
+                                <td className="pl-6 pr-3 py-3 font-mono font-bold text-slate-300 group-hover:text-purple-600 transition-colors">
                                   {String(i + 1).padStart(2, '0')}
                                 </td>
-                                <td className="px-6 py-3.5 font-bold text-slate-800 font-mono">
+                                <td className="px-5 py-3 font-bold text-slate-800 font-mono">
                                   {row.boxNo}
                                 </td>
-                                <td className="px-6 py-3.5 text-center">
-                                  <span className="font-mono font-bold text-slate-700 bg-slate-100 px-2 py-0.5 rounded border border-slate-200">
+                                <td className="px-5 py-3 text-center">
+                                  <span className="font-mono font-bold text-slate-700 bg-slate-100 px-1.5 py-0.5 rounded border border-slate-200">
                                     {row.location}
                                   </span>
                                 </td>
-                                <td className="px-6 py-3.5 text-center">
-                                  <span className="font-mono text-slate-600">
-                                    {row.rawGrade || '-'}
-                                  </span>
+                                <td className="px-5 py-3 text-center font-mono text-slate-600">
+                                  {row.rawGrade || '-'}
                                 </td>
-                                <td className="px-6 py-3.5 text-center">
+                                <td className="px-5 py-3 text-center">
                                   <span className={cn(
-                                    "px-2.5 py-0.5 rounded-md font-bold text-xs inline-block",
+                                    "px-2 py-0.5 rounded font-bold text-[10px] inline-block",
                                     row.grade === 'B' ? "bg-blue-100 text-blue-800 border border-blue-200" :
                                     row.grade === 'F' ? "bg-purple-100 text-purple-800 border border-purple-200" :
                                     row.grade === 'R' ? "bg-rose-100 text-rose-800 border border-rose-200" :
                                     "bg-slate-100 text-slate-700 border border-slate-200"
                                   )}>
-                                    {row.grade} 级品
+                                    Grade {row.grade}
                                   </span>
                                 </td>
-                                <td className="px-6 py-3.5 text-center font-mono font-bold text-slate-700">
+                                <td className="px-5 py-3 text-center font-mono font-bold text-slate-700">
                                   {row.barcodeCount !== undefined ? row.barcodeCount : '-'}
                                 </td>
-                                <td className="px-6 py-3.5 font-mono text-slate-600">
+                                <td className="px-5 py-3 font-mono text-slate-600">
                                   {row.orderNo || '-'}
                                 </td>
-                                <td className="px-6 py-3.5">
+                                <td className="px-5 py-3">
                                   <span className={cn(
-                                    "font-bold truncate max-w-[140px] block",
+                                    "font-bold truncate max-w-[130px] block",
                                     row.customerName === '未映射客户' ? "text-slate-400 italic font-normal" : "text-slate-800"
                                   )} title={row.customerName}>
-                                    {row.customerName || '未映射客户'}
+                                    {row.customerName || '-'}
                                   </span>
                                 </td>
-                                <td className="px-6 py-3.5 pr-12 text-center font-mono text-slate-500">
+                                <td className="px-5 py-3 pr-8 text-center font-mono text-slate-500">
                                   {row.power || '-'}
                                 </td>
                               </motion.tr>
                             ))
                           ) : (
                             <tr>
-                              <td colSpan={9} className="px-8 py-32 text-center">
+                              <td colSpan={9} className="px-8 py-24 text-center">
                                 <div className="flex flex-col items-center justify-center max-w-sm mx-auto">
-                                  <div className="w-12 h-12 bg-purple-50 text-purple-500 rounded-full flex items-center justify-center mb-4">
+                                  <div className="w-12 h-12 bg-purple-50 text-purple-500 rounded-full flex items-center justify-center mb-3">
                                     <Layers className="w-6 h-6" />
                                   </div>
-                                  <p className="text-sm font-bold text-slate-800">
-                                    {nonAGradeList.length === 0 ? '未检测到非A级别品' : '无符合当前筛选条件的非A级品'}
-                                  </p>
-                                  <p className="text-xs text-slate-400 mt-2 leading-relaxed">
-                                    {nonAGradeList.length === 0 
-                                      ? '当前主库存表中所有行均为 A 级良品，或尚未载入库存数据。'
-                                      : '请切换品级筛选标签或清空搜索关键词后重试。'}
+                                  <p className="text-xs font-bold text-slate-800">
+                                    {nonAGradeList.length === 0 ? 'No Non-A Grade items found (未检测到非A级品)' : 'No matching items (无匹配数据)'}
                                   </p>
                                 </div>
                               </td>
@@ -3492,13 +3414,13 @@ export default function App() {
                   </table>
                 </div>
 
-                <div className="p-6 bg-slate-50/50 border-t border-slate-100 flex items-center justify-between">
+                <div className="p-4 bg-slate-50/50 border-t border-slate-100 flex items-center justify-between">
                   <div className="flex items-center gap-1.5 opacity-60">
                     <CheckCircle2 className="w-3.5 h-3.5 text-emerald-500" />
-                    <span className="text-[10px] font-bold text-slate-500 uppercase tracking-widest">分析引擎 v5.0</span>
+                    <span className="text-[9px] font-bold text-slate-500 uppercase tracking-wider">Engine v5.1 Pro • Sandbox Mode</span>
                   </div>
-                  <p className="text-[10px] text-slate-400 font-medium">
-                    生成于 {new Date().toLocaleTimeString()} • 本地沙盒环境处理
+                  <p className="text-[9px] text-slate-400 font-mono">
+                    Updated: {new Date().toLocaleTimeString()}
                   </p>
                 </div>
               </div>
@@ -3532,13 +3454,13 @@ export default function App() {
                   </div>
                   <div>
                     <h3 className="text-base font-bold text-slate-800 flex items-center gap-2">
-                      S列箱条码数为 0 / 无条码过滤明细
+                      Zero-Barcode Filtered Items (S列条码为0明细)
                       <span className="px-2 py-0.5 rounded-full text-xs bg-orange-100 text-orange-700 font-mono font-bold">
-                        共 {zeroBarcodeList.length} 箱
+                        {zeroBarcodeList.length} Boxes (箱)
                       </span>
                     </h3>
                     <p className="text-xs text-slate-500 mt-0.5">
-                      根据规则，S列（箱条码数）为 0 或未填写条码的数据行不纳入实际库存统计。
+                      Rows with Column S (box barcode count) = 0 or empty are excluded from inventory calculation.
                     </p>
                   </div>
                 </div>
@@ -3548,7 +3470,7 @@ export default function App() {
                     className="px-3.5 py-2 bg-orange-600 hover:bg-orange-700 text-white rounded-xl text-xs font-bold flex items-center gap-1.5 shadow-sm transition-colors"
                   >
                     <Download className="w-3.5 h-3.5" />
-                    导出Excel清单
+                    Export Excel (导出清单)
                   </button>
                   <button
                     onClick={() => setShowZeroBarcodeModal(false)}
@@ -3565,21 +3487,21 @@ export default function App() {
                   <table className="w-full text-left border-collapse text-xs">
                     <thead>
                       <tr className="bg-slate-50 border-b border-slate-200 text-[10px] uppercase font-bold text-slate-500">
-                        <th className="px-4 py-3 text-center">序号</th>
-                        <th className="px-4 py-3">原表行号</th>
-                        <th className="px-4 py-3">箱号</th>
-                        <th className="px-4 py-3">库位名称</th>
-                        <th className="px-4 py-3">K列箱等级</th>
-                        <th className="px-4 py-3 text-center">S列原值</th>
-                        <th className="px-4 py-3">工单号</th>
-                        <th className="px-4 py-3">过滤判定依据</th>
+                        <th className="px-4 py-3 text-center">No. (序号)</th>
+                        <th className="px-4 py-3">Row No. (原行号)</th>
+                        <th className="px-4 py-3">Box No. (箱号)</th>
+                        <th className="px-4 py-3">Location (库位)</th>
+                        <th className="px-4 py-3">Grade (Col K)</th>
+                        <th className="px-4 py-3 text-center">Raw Val (S列原值)</th>
+                        <th className="px-4 py-3">Order No. (工单号)</th>
+                        <th className="px-4 py-3">Filter Reason (判定原因)</th>
                       </tr>
                     </thead>
                     <tbody className="divide-y divide-slate-100">
                       {zeroBarcodeList.map((item, idx) => (
                         <tr key={idx} className="hover:bg-orange-50/30 transition-colors">
                           <td className="px-4 py-2.5 text-center font-mono text-slate-400">{idx + 1}</td>
-                          <td className="px-4 py-2.5 font-mono text-slate-600">第 {item.rowIdx} 行</td>
+                          <td className="px-4 py-2.5 font-mono text-slate-600">Row {item.rowIdx}</td>
                           <td className="px-4 py-2.5 font-mono font-bold text-slate-800">{item.boxNo}</td>
                           <td className="px-4 py-2.5 font-mono text-slate-600">{item.location}</td>
                           <td className="px-4 py-2.5">
@@ -3588,7 +3510,7 @@ export default function App() {
                             </span>
                           </td>
                           <td className="px-4 py-2.5 text-center font-mono font-bold text-orange-600">
-                            {item.rawBarcode === '' ? <span className="text-slate-400 font-normal italic">(留空)</span> : item.rawBarcode}
+                            {item.rawBarcode === '' ? <span className="text-slate-400 font-normal italic">(Empty/留空)</span> : item.rawBarcode}
                           </td>
                           <td className="px-4 py-2.5 font-mono text-slate-500">{item.orderNo || '-'}</td>
                           <td className="px-4 py-2.5 text-slate-600">
@@ -3606,13 +3528,13 @@ export default function App() {
               {/* Modal Footer */}
               <div className="px-6 py-4 border-t border-slate-100 bg-slate-50 flex items-center justify-between text-xs text-slate-500">
                 <span>
-                  勾稽关系：总数据 {totalRowsRaw} 行 - 过滤条码0 {zeroBarcodeList.length} 行 = 实际纳入 {totalRowsRaw - zeroBarcodeList.length} 箱
+                  Reconciliation: Raw rows {totalRowsRaw} - Barcode=0 ({zeroBarcodeList.length}) = Valid {totalRowsRaw - zeroBarcodeList.length} boxes (实际有效)
                 </span>
                 <button
                   onClick={() => setShowZeroBarcodeModal(false)}
                   className="px-4 py-1.5 bg-slate-200 hover:bg-slate-300 text-slate-700 rounded-xl text-xs font-bold transition-colors"
                 >
-                  关闭
+                  Close (关闭)
                 </button>
               </div>
             </motion.div>
@@ -3620,7 +3542,7 @@ export default function App() {
         )}
       </AnimatePresence>
 
-      {/* 8箱差异深度溯源与行号诊断 Modal */}
+      {/* 8-Box Variance Audit & Diagnostics Modal */}
       <AnimatePresence>
         {showAuditModal && (
           <motion.div
@@ -3645,13 +3567,13 @@ export default function App() {
                   </div>
                   <div>
                     <h3 className="text-base font-bold text-slate-800 flex items-center gap-2">
-                      8箱差异深度溯源与行号特点诊断
+                      Reconciliation & Audit Diagnostics (8箱差异深度溯源与诊断)
                       <span className="px-2 py-0.5 rounded-full text-xs bg-indigo-100 text-indigo-700 font-mono font-bold">
-                        差异 = 8 箱 (7357 vs 7349)
+                        Variance: 8 Boxes (差异 8 箱)
                       </span>
                     </h3>
                     <p className="text-xs text-slate-500 mt-0.5">
-                      全量透析 7,380 行 (原表总行) vs 7,372 箱 (表格统计) 与 7,357 箱 (有效纳入) 的勾稽逻辑
+                      Full audit reconciliation: {totalRowsRaw} raw rows vs 7,372 subtotal vs {totalRowsRaw - zeroBarcodeCount} valid boxes
                     </p>
                   </div>
                 </div>
@@ -3661,7 +3583,7 @@ export default function App() {
                     className="px-3.5 py-1.5 bg-indigo-600 hover:bg-indigo-700 text-white rounded-xl text-xs font-bold flex items-center gap-1.5 transition-colors shadow-sm"
                   >
                     <Download className="w-3.5 h-3.5" />
-                    导出诊断清单Excel
+                    Export Audit Excel (导出诊断表)
                   </button>
                   <button 
                     onClick={() => setShowAuditModal(false)}
@@ -3675,85 +3597,85 @@ export default function App() {
               {/* Modal Body */}
               <div className="p-6 overflow-y-auto space-y-6 max-h-[calc(90vh-140px)]">
                 
-                {/* 1. 数学勾稽全景透视图 */}
+                {/* 1. Mathematical Reconciliation Overview */}
                 <div className="bg-slate-900 rounded-2xl p-5 text-white shadow-md space-y-4">
                   <div className="flex items-center justify-between border-b border-slate-800 pb-3">
                     <span className="text-xs font-bold text-indigo-400 uppercase tracking-wider flex items-center gap-2">
                       <ListOrdered className="w-4 h-4" />
-                      核心数学勾稽关系全景推导（为什么会出现 7357 与 7349 的 8 箱差额）
+                      Core Mathematical Derivation & Reconciliation (推导等式)
                     </span>
                     <span className="text-[10px] text-slate-400 font-mono">
-                      严格数学等式
+                      Strict Audit Proof (严格闭环)
                     </span>
                   </div>
 
                   <div className="grid grid-cols-1 md:grid-cols-4 gap-3 text-center font-mono">
                     <div className="bg-slate-800/80 p-3 rounded-xl border border-slate-700">
-                      <span className="text-[10px] text-slate-400 block font-sans">① 原始文件实际总行数</span>
-                      <span className="text-xl font-bold text-white mt-1 block">{totalRowsRaw} 行</span>
-                      <span className="text-[9px] text-slate-400 block mt-1">Excel 真实物理数据行</span>
+                      <span className="text-[10px] text-slate-400 block font-sans">① Raw Data Rows (源表总行)</span>
+                      <span className="text-xl font-bold text-white mt-1 block">{totalRowsRaw}</span>
+                      <span className="text-[9px] text-slate-400 block mt-1">Excel physical rows</span>
                     </div>
                     <div className="bg-orange-950/60 p-3 rounded-xl border border-orange-800/80">
-                      <span className="text-[10px] text-orange-300 block font-sans">② S列条码为0过滤</span>
-                      <span className="text-xl font-bold text-orange-400 mt-1 block">-{zeroBarcodeCount} 箱</span>
-                      <span className="text-[9px] text-orange-300/80 block mt-1">作废/无条码排除行</span>
+                      <span className="text-[10px] text-orange-300 block font-sans">② Col S=0 Filtered (S列0条码)</span>
+                      <span className="text-xl font-bold text-orange-400 mt-1 block">-{zeroBarcodeCount}</span>
+                      <span className="text-[9px] text-orange-300/80 block mt-1">Excluded empty rows</span>
                     </div>
                     <div className="bg-emerald-950/60 p-3 rounded-xl border border-emerald-800/80">
-                      <span className="text-[10px] text-emerald-300 block font-sans">③ 实际有效纳入总箱数</span>
-                      <span className="text-xl font-bold text-emerald-400 mt-1 block">{totalRowsRaw - zeroBarcodeCount} 箱</span>
-                      <span className="text-[9px] text-emerald-300/80 block mt-1">7380 - 23 = 7357</span>
+                      <span className="text-[10px] text-emerald-300 block font-sans">③ Valid Included Boxes (有效总箱数)</span>
+                      <span className="text-xl font-bold text-emerald-400 mt-1 block">{totalRowsRaw - zeroBarcodeCount}</span>
+                      <span className="text-[9px] text-emerald-300/80 block mt-1">7,380 - 23 = 7,357</span>
                     </div>
                     <div className="bg-purple-950/60 p-3 rounded-xl border border-purple-800/80">
-                      <span className="text-[10px] text-purple-300 block font-sans">④ A级与非A级构成</span>
+                      <span className="text-[10px] text-purple-300 block font-sans">④ Grade A + Non-A (品级构成)</span>
                       <span className="text-lg font-bold text-purple-300 mt-1 block">{data.length} + {nonAGradeCount}</span>
-                      <span className="text-[9px] text-purple-300/80 block mt-1">6879 (A) + 478 (非A) = 7357</span>
+                      <span className="text-[9px] text-purple-300/80 block mt-1">6,879 (A) + 478 (Non-A) = 7,357</span>
                     </div>
                   </div>
 
-                  {/* 核心原理解析条 */}
+                  {/* Root Cause Explanation */}
                   <div className="bg-indigo-950/50 border border-indigo-700/60 rounded-xl p-3.5 text-xs text-indigo-200 space-y-1.5 leading-relaxed font-sans">
                     <p className="font-bold text-indigo-300 flex items-center gap-1.5 text-sm">
                       <Info className="w-4 h-4 text-indigo-400 shrink-0" />
-                      8箱差异的根本原因揭秘：
+                      Root Cause Analysis (差异根本原因分析):
                     </p>
                     <p>
-                      • <strong>您算出的 7,349 箱：</strong> 来自于公式 <code className="bg-slate-800 px-1.5 py-0.5 rounded text-amber-300 font-mono">7,372 - 23 = 7,349</code>（用您之前表格统计的 7,372 减去了 23 箱）。
+                      • <strong>Reported 7,349 Boxes:</strong> Calculated from <code className="bg-slate-800 px-1.5 py-0.5 rounded text-amber-300 font-mono">7,372 - 23 = 7,349</code> (deducting 23 from previous table subtotal of 7,372).
                     </p>
                     <p>
-                      • <strong>系统的 7,357 箱：</strong> 来自于公式 <code className="bg-slate-800 px-1.5 py-0.5 rounded text-emerald-300 font-mono">7,380 - 23 = 7,357</code>（用源文件的实际 7,380 行减去了 23 箱）。
+                      • <strong>Actual 7,357 Boxes:</strong> Calculated from <code className="bg-slate-800 px-1.5 py-0.5 rounded text-emerald-300 font-mono">7,380 - 23 = 7,357</code> (deducting 23 from full raw dataset of 7,380 rows).
                     </p>
                     <p>
-                      • <strong>两式之差：</strong> <code className="bg-slate-800 px-1.5 py-0.5 rounded text-white font-mono">7,357 - 7,349 = (7,380 - 23) - (7,372 - 23) = 7,380 - 7,372 = 8 箱</code>！
+                      • <strong>Net Difference:</strong> <code className="bg-slate-800 px-1.5 py-0.5 rounded text-white font-mono">7,357 - 7,349 = (7,380 - 23) - (7,372 - 23) = 7,380 - 7,372 = 8 Boxes</code>.
                     </p>
                     <p className="text-emerald-300 font-medium">
-                      👉 <strong>结论：</strong> 6,879 (A级) + 478 (非A级) = 7,357 箱，在生成时<strong>已经把这 23 箱无效数据扣除掉了</strong>！并非去除23箱之后少8箱，而是您之前表格统计 7,372 箱时，就已经比源文件总行数（7,380 行）少计了 8 箱！
+                      👉 <strong>Conclusion (结论):</strong> The 6,879 Grade-A + 478 Non-A = 7,357 boxes strictly exclude all 23 invalid rows. The 8-box gap arose because the previous 7,372 subtotal had already omitted 8 source rows before deduction.
                     </p>
                   </div>
                 </div>
 
-                {/* 2. 这 8 箱在源表格 7380 行中的特点排查与具体行号 */}
+                {/* 2. Diagnostics by Characteristic */}
                 <div className="space-y-4">
                   <h4 className="text-sm font-bold text-slate-800 flex items-center gap-2">
                     <span className="w-2.5 h-2.5 rounded-full bg-blue-600" />
-                    源数据深度扫描：这 8 箱差异对应哪些行？有什么特点？
+                    Source Data Diagnostics by Pattern (分类特征诊断)
                   </h4>
 
-                  {/* 特点 1: 重复箱号 */}
+                  {/* Feature 1: Duplicate Box Numbers */}
                   <div className="bg-slate-50 border border-slate-200 rounded-2xl p-4 space-y-3">
                     <div className="flex items-center justify-between">
                       <div>
                         <h5 className="text-xs font-bold text-slate-800 flex items-center gap-1.5">
-                          特点 ①：【重复箱号】（一箱多分录 / 一箱多工单 / 多功率档 / 重复扫描）
+                          Pattern 1: Duplicate Box Numbers (重复箱号排查)
                         </h5>
                         <p className="text-[11px] text-slate-500 mt-0.5">
-                          若在 Excel 中使用了透视表（非重复计数）或按箱号去重，重复出现的箱号只会被计为 1 箱，导致统计箱数比总行数少！
+                          If deduplication or pivot distinct count was used, duplicate box records will be collapsed into 1 count.
                         </p>
                       </div>
                       <span className={cn(
                         "px-2.5 py-1 rounded-full text-xs font-bold font-mono",
                         auditReport && auditReport.duplicateRowCount > 0 ? "bg-amber-100 text-amber-800 border border-amber-200" : "bg-emerald-100 text-emerald-800"
                       )}>
-                        {auditReport ? `重复 ${auditReport.duplicateRowCount} 行 (${auditReport.duplicateBoxes.length} 个箱号)` : '正在扫描...'}
+                        {auditReport ? `${auditReport.duplicateRowCount} rows (${auditReport.duplicateBoxes.length} boxes)` : 'Scanning...'}
                       </span>
                     </div>
 
@@ -3762,13 +3684,13 @@ export default function App() {
                         <table className="w-full text-left text-xs">
                           <thead className="bg-slate-100 sticky top-0 text-[10px] font-bold text-slate-600 uppercase">
                             <tr>
-                              <th className="px-3 py-2">箱号</th>
-                              <th className="px-3 py-2 text-center">原表格行号</th>
-                              <th className="px-3 py-2 text-center">重复次数</th>
-                              <th className="px-3 py-2">库位</th>
-                              <th className="px-3 py-2">功率档</th>
-                              <th className="px-3 py-2">工单号</th>
-                              <th className="px-3 py-2">分析特点</th>
+                              <th className="px-3 py-2">Box No. (箱号)</th>
+                              <th className="px-3 py-2 text-center">Row No. (原行号)</th>
+                              <th className="px-3 py-2 text-center">Occurrences (重复频次)</th>
+                              <th className="px-3 py-2">Location (库位)</th>
+                              <th className="px-3 py-2">Power (功率档)</th>
+                              <th className="px-3 py-2">Order No. (工单号)</th>
+                              <th className="px-3 py-2">Characteristic (诊断特征)</th>
                             </tr>
                           </thead>
                           <tbody className="divide-y divide-slate-100 font-mono">
@@ -3776,11 +3698,11 @@ export default function App() {
                               <tr key={idx} className="hover:bg-amber-50/50">
                                 <td className="px-3 py-2 font-bold text-slate-800">{dup.boxNo}</td>
                                 <td className="px-3 py-2 text-center text-indigo-600 font-bold">
-                                  {dup.rows.map(r => `第${r.rowIdx}行`).join(', ')}
+                                  {dup.rows.map(r => `Row ${r.rowIdx}`).join(', ')}
                                 </td>
                                 <td className="px-3 py-2 text-center">
                                   <span className="px-2 py-0.5 rounded bg-amber-100 text-amber-800 text-[10px] font-bold">
-                                    {dup.count} 次
+                                    {dup.count}x
                                   </span>
                                 </td>
                                 <td className="px-3 py-2 font-sans">{dup.rows.map(r => r.location).join(' / ')}</td>
@@ -3788,10 +3710,10 @@ export default function App() {
                                 <td className="px-3 py-2">{dup.rows.map(r => r.orderNo).join(' / ')}</td>
                                 <td className="px-3 py-2 font-sans text-amber-700 text-[11px]">
                                   {dup.rows.some((r, i, arr) => i > 0 && r.power !== arr[0].power) 
-                                    ? '同箱号多功率档分录' 
+                                    ? 'Multi-Power (同箱多功率分录)' 
                                     : dup.rows.some((r, i, arr) => i > 0 && r.orderNo !== arr[0].orderNo)
-                                    ? '同箱号多工单分录'
-                                    : '同箱号完全重复扫描录入'}
+                                    ? 'Multi-Order (同箱多工单分录)'
+                                    : 'Exact Duplicate (完全重复录入)'}
                                 </td>
                               </tr>
                             ))}
@@ -3800,24 +3722,24 @@ export default function App() {
                       </div>
                     ) : (
                       <p className="text-xs text-slate-500 italic bg-white p-3 rounded-xl border border-slate-200">
-                        当前文件未检测到重复箱号，所有有效数据行的箱号均互不相同。
+                        No duplicate box numbers found in the current dataset. All valid rows have unique box identifiers.
                       </p>
                     )}
                   </div>
 
-                  {/* 特点 2: S列条码明确为0的 23 箱行号与特点 */}
+                  {/* Feature 2: Col S = 0 Filtered Items */}
                   <div className="bg-orange-50/60 border border-orange-200 rounded-2xl p-4 space-y-3">
                     <div className="flex items-center justify-between">
                       <div>
                         <h5 className="text-xs font-bold text-slate-800 flex items-center gap-1.5">
-                          特点 ②：【S列条码为0被过滤的 23 箱明细与等级归属】
+                          Pattern 2: Col S=0 Filtered Rows ({zeroBarcodeList.length} Items)
                         </h5>
                         <p className="text-[11px] text-slate-500 mt-0.5">
-                          这 23 箱在解析时因 S 列明确为 0 被排除。其中包含：A级品 {auditReport?.zeroBarcodeBreakdown.gradeA || 0} 箱，非A级品 {auditReport?.zeroBarcodeBreakdown.gradeNonA || 0} 箱。
+                          Grade A: {auditReport?.zeroBarcodeBreakdown.gradeA || 0} boxes, Non-A: {auditReport?.zeroBarcodeBreakdown.gradeNonA || 0} boxes.
                         </p>
                       </div>
                       <span className="px-2.5 py-1 rounded-full text-xs font-bold font-mono bg-orange-100 text-orange-800 border border-orange-200">
-                        共 {zeroBarcodeList.length} 箱
+                        {zeroBarcodeList.length} Boxes (箱)
                       </span>
                     </div>
 
@@ -3825,19 +3747,19 @@ export default function App() {
                       <table className="w-full text-left text-xs">
                         <thead className="bg-orange-100/60 sticky top-0 text-[10px] font-bold text-orange-900 uppercase">
                           <tr>
-                            <th className="px-3 py-2 text-center">原表行号</th>
-                            <th className="px-3 py-2">箱号</th>
-                            <th className="px-3 py-2">库位</th>
-                            <th className="px-3 py-2 text-center">K列箱等级</th>
-                            <th className="px-3 py-2 text-center">S列条码数原值</th>
-                            <th className="px-3 py-2">工单号</th>
-                            <th className="px-3 py-2">判定原因</th>
+                            <th className="px-3 py-2 text-center">Row No. (行号)</th>
+                            <th className="px-3 py-2">Box No. (箱号)</th>
+                            <th className="px-3 py-2">Location (库位)</th>
+                            <th className="px-3 py-2 text-center">Grade (Col K)</th>
+                            <th className="px-3 py-2 text-center">Raw Barcode (S列原值)</th>
+                            <th className="px-3 py-2">Order No. (工单)</th>
+                            <th className="px-3 py-2">Reason (原因)</th>
                           </tr>
                         </thead>
                         <tbody className="divide-y divide-orange-100 font-mono">
                           {zeroBarcodeList.map((item, idx) => (
                             <tr key={idx} className="hover:bg-orange-50/40">
-                              <td className="px-3 py-2 text-center font-bold text-orange-700">第 {item.rowIdx} 行</td>
+                              <td className="px-3 py-2 text-center font-bold text-orange-700">Row {item.rowIdx}</td>
                               <td className="px-3 py-2 font-bold text-slate-800">{item.boxNo}</td>
                               <td className="px-3 py-2 font-sans">{item.location}</td>
                               <td className="px-3 py-2 text-center">
@@ -3849,7 +3771,7 @@ export default function App() {
                                 </span>
                               </td>
                               <td className="px-3 py-2 text-center font-bold text-rose-600">
-                                {item.rawBarcode === '' ? '(留空)' : `"${item.rawBarcode}"`}
+                                {item.rawBarcode === '' ? '(Empty/留空)' : `"${item.rawBarcode}"`}
                               </td>
                               <td className="px-3 py-2">{item.orderNo || '-'}</td>
                               <td className="px-3 py-2 font-sans text-slate-600 text-[11px]">{item.reason}</td>
@@ -3860,33 +3782,33 @@ export default function App() {
                     </div>
                   </div>
 
-                  {/* 特点 3: 空箱号与空库位排查 */}
+                  {/* Feature 3 & 4: Empty Box & Empty Location */}
                   <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                     <div className="bg-slate-50 border border-slate-200 rounded-2xl p-4 space-y-2">
                       <div className="flex items-center justify-between">
-                        <span className="text-xs font-bold text-slate-800">特点 ③：空箱号行（未录入箱号）</span>
+                        <span className="text-xs font-bold text-slate-800">Pattern 3: Empty Box No. (空箱号)</span>
                         <span className="px-2 py-0.5 rounded text-xs font-bold font-mono bg-slate-200 text-slate-700">
-                          {auditReport ? auditReport.emptyBoxRows.length : 0} 行
+                          {auditReport ? auditReport.emptyBoxRows.length : 0} Rows
                         </span>
                       </div>
                       <p className="text-[11px] text-slate-500">
                         {auditReport && auditReport.emptyBoxRows.length > 0 
-                          ? `分布在原表：第 ${auditReport.emptyBoxRows.map(x => x.rowIdx).join(', ')} 行`
-                          : '所有数据行均录入了有效箱号，未发现箱号为空的异常行。'}
+                          ? `Found in rows: ${auditReport.emptyBoxRows.map(x => `Row ${x.rowIdx}`).join(', ')}`
+                          : 'All rows contain valid box identifiers.'}
                       </p>
                     </div>
 
                     <div className="bg-slate-50 border border-slate-200 rounded-2xl p-4 space-y-2">
                       <div className="flex items-center justify-between">
-                        <span className="text-xs font-bold text-slate-800">特点 ④：空库位 / 待定库位</span>
+                        <span className="text-xs font-bold text-slate-800">Pattern 4: Empty / Unassigned Location (空库位)</span>
                         <span className="px-2 py-0.5 rounded text-xs font-bold font-mono bg-slate-200 text-slate-700">
-                          {auditReport ? auditReport.emptyLocRows.length : 0} 行
+                          {auditReport ? auditReport.emptyLocRows.length : 0} Rows
                         </span>
                       </div>
                       <p className="text-[11px] text-slate-500">
                         {auditReport && auditReport.emptyLocRows.length > 0
-                          ? `分布在原表：第 ${auditReport.emptyLocRows.map(x => x.rowIdx).join(', ')} 行`
-                          : '所有数据行均有确切库位，未发现未分配库位或 TBD 库位。'}
+                          ? `Found in rows: ${auditReport.emptyLocRows.map(x => `Row ${x.rowIdx}`).join(', ')}`
+                          : 'All rows have designated location assignments.'}
                       </p>
                     </div>
                   </div>
@@ -3897,7 +3819,7 @@ export default function App() {
               {/* Modal Footer */}
               <div className="px-6 py-4 border-t border-slate-100 bg-slate-50 flex items-center justify-between text-xs text-slate-500">
                 <span>
-                  数据勾稽核验：{totalRowsRaw} (原总行) - {zeroBarcodeCount} (条码0) = {totalRowsRaw - zeroBarcodeCount} 箱 [{data.length} A级 + {nonAGradeCount} 非A级]
+                  Audit: {totalRowsRaw} (Raw) - {zeroBarcodeCount} (Col S=0) = {totalRowsRaw - zeroBarcodeCount} Boxes [{data.length} Grade-A + {nonAGradeCount} Non-A]
                 </span>
                 <div className="flex items-center gap-2">
                   <button
@@ -3905,13 +3827,13 @@ export default function App() {
                     className="px-4 py-1.5 bg-indigo-600 hover:bg-indigo-700 text-white rounded-xl text-xs font-bold transition-colors shadow-sm flex items-center gap-1"
                   >
                     <Download className="w-3.5 h-3.5" />
-                    下载完整诊断表
+                    Export Audit Excel (导出诊断表)
                   </button>
                   <button
                     onClick={() => setShowAuditModal(false)}
                     className="px-4 py-1.5 bg-slate-200 hover:bg-slate-300 text-slate-700 rounded-xl text-xs font-bold transition-colors"
                   >
-                    关闭
+                    Close (关闭)
                   </button>
                 </div>
               </div>
@@ -3931,7 +3853,7 @@ export default function App() {
               <AlertCircle className="w-5 h-5 text-white" />
             </div>
             <div>
-              <p className="text-[10px] font-bold text-red-400 uppercase tracking-widest mb-0.5">分析错误</p>
+              <p className="text-[10px] font-bold text-red-400 uppercase tracking-widest mb-0.5">Analysis Error (分析错误)</p>
               <p className="text-sm font-bold">{error}</p>
             </div>
             <button onClick={() => setError(null)} className="ml-4 p-2 hover:bg-white/10 rounded-lg transition-colors text-slate-400">
@@ -3954,7 +3876,7 @@ export default function App() {
               <CheckCircle2 className="w-5 h-5 text-white" />
             </div>
             <div>
-              <p className="text-[10px] font-bold text-emerald-400 uppercase tracking-widest mb-0.5">保存成功</p>
+              <p className="text-[10px] font-bold text-emerald-400 uppercase tracking-widest mb-0.5">Success (操作成功)</p>
               <p className="text-sm font-bold">{saveSuccess}</p>
             </div>
             <button onClick={() => setSaveSuccess(null)} className="ml-4 p-2 hover:bg-white/10 rounded-lg transition-colors text-slate-400">
