@@ -244,6 +244,26 @@ const getNormalizedGradeCategory = (rawGrade: string): string => {
   return g;
 };
 
+/**
+ * 校验推荐目标库位是否有效：
+ * 严禁推荐到：
+ * 1. 包装-通道、任何包含“包装”或“通道”的临时走道
+ * 2. WA 通道及以 WA 开头的过渡库位
+ * 3. pending、待定、暂存、TBD、Unknown 等临时过渡库位
+ * 4. A 库位（出货暂存区）
+ */
+const isInvalidTargetLocation = (loc: string): boolean => {
+  if (!loc) return true;
+  const raw = String(loc).trim();
+  const upper = raw.toUpperCase();
+  if (upper === '' || upper === 'TBD' || upper === 'UNKNOWN' || upper === 'NONE') return true;
+  if (upper.startsWith('A')) return true;
+  if (upper === 'WA' || upper.startsWith('WA')) return true;
+  if (upper.includes('PENDING') || raw.includes('待定') || raw.includes('暂存')) return true;
+  if (raw.includes('包装') || raw.includes('通道')) return true;
+  return false;
+};
+
 export default function App() {
   const STANDARD_CAPACITY = 18;
   const [data, setData] = useState<InventoryRow[]>([]);
@@ -403,9 +423,15 @@ export default function App() {
     setSaveSuccess(`已成功应用云端版本：${mappingItem.mappingFileName}`);
     setTimeout(() => setSaveSuccess(null), 3000);
 
+    const updatedNonA = nonAGradeList.map(item => ({
+      ...item,
+      customerName: mappingItem.orderCustomerMap[item.orderNo || ''] || item.customerName || '未映射客户'
+    }));
+    setNonAGradeList(updatedNonA);
+
     // 如果已加载了库存表，顺便连带重新计算分析
     if (data.length > 0) {
-      performAnalysis(data, mappingItem.orderCustomerMap);
+      performAnalysis(data, mappingItem.orderCustomerMap, updatedNonA);
     }
   };
 
@@ -759,7 +785,7 @@ export default function App() {
         setAuditReport(report);
 
         setData(parsedData);
-        performAnalysis(parsedData, orderCustomerMap);
+        performAnalysis(parsedData, orderCustomerMap, nonAGradeListLocal);
       } catch (err) {
         setError(err instanceof Error ? err.message : '文件解析失败，请检查格式是否正确');
         console.error(err);
@@ -844,13 +870,14 @@ export default function App() {
         setIsCloudSynced(false);
         setLastSyncedCloudTime(null);
         
-        setNonAGradeList(prev => prev.map(item => ({
+        const updatedNonA = nonAGradeList.map(item => ({
           ...item,
           customerName: newMap[item.orderNo || ''] || item.customerName || '未映射客户'
-        })));
+        }));
+        setNonAGradeList(updatedNonA);
 
         if (data.length > 0) {
-          performAnalysis(data, newMap);
+          performAnalysis(data, newMap, updatedNonA);
         }
       } catch (err) {
         setError(err instanceof Error ? err.message : '对照表文件解析失败');
@@ -860,7 +887,11 @@ export default function App() {
     reader.readAsBinaryString(file);
   };
 
-  const performAnalysis = (rows: InventoryRow[], currentMap: Record<string, string> = orderCustomerMap) => {
+  const performAnalysis = (
+    rows: InventoryRow[], 
+    currentMap: Record<string, string> = orderCustomerMap,
+    nonARows: NonAGradeRow[] = nonAGradeList
+  ) => {
     const locationMap: Record<string, Set<string | number>> = {};
     // 功率检测：库位 -> { 功率档 -> [箱号] }
     const locationPowerData: Record<string, Record<string, Set<string>>> = {};
@@ -939,7 +970,7 @@ export default function App() {
         const customerMapForLoc = locationCustomerData[location] || {};
         const customersDist: Record<string, number> = {};
         Object.entries(customerMapForLoc).forEach(([cust, boxes]) => {
-          if (boxes.size > 0) {
+          if (boxes.size > maxCustomerCount) {
             customersDist[cust] = boxes.size;
           }
         });
@@ -975,10 +1006,10 @@ export default function App() {
           '主存功率': boxCount > 0 ? dominantPower : '空置'
         };
       });
- 
+
     // 排序逻辑：严格按照基准序列（C00~C60, D00~D60...WG1~WG5）排序，不在范围内的有货库位统一排在最末尾
     analysisResults.sort((a, b) => compareLocations(a['库位名称'], b['库位名称']));
- 
+
     // 处理混档警告 (库位内功率档种类 > 1)
     const alerts: MixedPowerAlert[] = [];
     Object.entries(locationPowerData).forEach(([loc, powers]) => {
@@ -994,7 +1025,7 @@ export default function App() {
         });
       }
     });
- 
+
     // 处理客户混载警告
     const customerAlerts: MixedCustomerAlert[] = [];
     Object.entries(locationCustomerData).forEach(([loc, customers]) => {
@@ -1013,25 +1044,25 @@ export default function App() {
         });
       }
     });
- 
+
     // 客户箱数统计
     const customerBoxes: Record<string, Set<string>> = {};
     const customerLocs: Record<string, Set<string>> = {};
- 
+
     rows.forEach(row => {
       const box = row['箱号'];
       if (box !== undefined && box !== null && String(box).trim() !== '') {
         const boxStr = String(box);
         const orderNo = String(row['工单号'] || row['销售单号'] || '空单号').trim();
         const custName = currentMap[orderNo] || '未映射客户';
- 
+
         let loc = normalizeLocationName(row['库位名称']);
- 
+
         if (!customerBoxes[custName]) {
           customerBoxes[custName] = new Set();
         }
         customerBoxes[custName].add(boxStr);
- 
+
         if (loc) {
           if (!customerLocs[custName]) {
             customerLocs[custName] = new Set();
@@ -1040,7 +1071,7 @@ export default function App() {
         }
       }
     });
- 
+
     const stats: CustomerStat[] = Object.entries(customerBoxes).map(([custName, boxSet]) => {
       return {
         customerName: custName,
@@ -1048,19 +1079,14 @@ export default function App() {
         locations: Array.from(customerLocs[custName] || []).sort(compareLocations)
       };
     }).sort((a, b) => b.boxCount - a.boxCount);
- 
-    // 计算每个库位的主属性（主客户和主功率）与迁移修正建议
-    const getPerfectCapacity = (locName: string) => {
-      return locName.toUpperCase().startsWith('H') ? 14 : 18;
-    };
 
+    // 计算每个库位的主属性（主客户和主功率）
     const locationDominantAttrs: Record<string, { dominantCustomer: string; dominantPower: string }> = {};
 
     Object.keys(locationMap).forEach(loc => {
       const powers = locationPowerData[loc] || {};
       const customers = locationCustomerData[loc] || {};
 
-      // 主功率：箱数最多的功率挡
       let dominantPower = '未知';
       let maxPowerCount = 0;
       Object.entries(powers).forEach(([p, boxes]) => {
@@ -1070,7 +1096,6 @@ export default function App() {
         }
       });
 
-      // 主客户：箱数最多的客户名称
       let dominantCustomer = '未映射客户';
       let maxCustomerCount = 0;
       Object.entries(customers).forEach(([c, boxes]) => {
@@ -1086,121 +1111,269 @@ export default function App() {
       };
     });
 
+    // 统计 H 库位实际占用（包含 A级箱和非A级箱，容量上限14）
+    const hOccupancyMap: Record<string, { count: number; grades: Set<string>; customers: Set<string> }> = {};
+    PREDEFINED_LOCATIONS.filter(l => l.toUpperCase().startsWith('H')).forEach(hLoc => {
+      hOccupancyMap[hLoc] = { count: 0, grades: new Set(), customers: new Set() };
+    });
+    activeBoxes.forEach(b => {
+      if (b.location.toUpperCase().startsWith('H')) {
+        if (!hOccupancyMap[b.location]) {
+          hOccupancyMap[b.location] = { count: 0, grades: new Set(), customers: new Set() };
+        }
+        hOccupancyMap[b.location].count++;
+        if (b.customerName) hOccupancyMap[b.location].customers.add(b.customerName);
+      }
+    });
+    nonARows.forEach(item => {
+      const loc = normalizeLocationName(item.location);
+      if (loc.toUpperCase().startsWith('H')) {
+        if (!hOccupancyMap[loc]) {
+          hOccupancyMap[loc] = { count: 0, grades: new Set(), customers: new Set() };
+        }
+        hOccupancyMap[loc].count++;
+        if (item.grade) hOccupancyMap[loc].grades.add(item.grade);
+        if (item.customerName) hOccupancyMap[loc].customers.add(item.customerName);
+      }
+    });
+
     const suggestions: RelocationSuggestion[] = [];
 
-    // 对不一致的箱号进行筛查并进行迁移位置推荐
+    // Helper: 寻找常规推荐库位 (供 A 级品使用，容量18，严格排除 H库位 及 包装/WA/pending)
+    const findBestRegularLocation = (currentLoc: string, customerName: string, power: string) => {
+      // 1. 首选：完全匹配客户与功率档且有余量 (< 18)
+      const perfectMatches = Object.entries(locationMap)
+        .map(([l, bSet]) => {
+          const cnt = bSet.size;
+          const cap = 18;
+          const attrs = locationDominantAttrs[l];
+          return { l, cnt, cap, attrs };
+        })
+        .filter(item => {
+          return item.l !== currentLoc &&
+                 !isInvalidTargetLocation(item.l) &&
+                 !item.l.toUpperCase().startsWith('H') &&
+                 item.cnt < item.cap &&
+                 item.attrs?.dominantCustomer === customerName &&
+                 item.attrs?.dominantPower === power;
+        });
+
+      if (perfectMatches.length > 0) {
+        perfectMatches.sort((a, b) => (b.cap - b.cnt) - (a.cap - a.cnt));
+        const best = perfectMatches[0];
+        return {
+          recommendedLoc: best.l,
+          recommendationReason: `Move to ${best.l}: matches customer (${customerName}) & power (${power}), ${best.cap - best.cnt} slots avail.`
+        };
+      }
+
+      // 2. 备选：全新完全空置常规库位 (cnt === 0)
+      const emptyLocs = Object.entries(locationMap)
+        .map(([l, bSet]) => ({ l, cnt: bSet.size, cap: 18 }))
+        .filter(item => {
+          return item.l !== currentLoc &&
+                 !isInvalidTargetLocation(item.l) &&
+                 !item.l.toUpperCase().startsWith('H') &&
+                 item.cnt === 0;
+        });
+
+      if (emptyLocs.length > 0) {
+        emptyLocs.sort((a, b) => compareLocations(a.l, b.l));
+        const bestEmpty = emptyLocs[0];
+        return {
+          recommendedLoc: bestEmpty.l,
+          recommendationReason: `Move to empty location ${bestEmpty.l}: dedicated storage (${bestEmpty.cap - bestEmpty.cnt} slots avail.)`
+        };
+      }
+
+      // 3. 次选：匹配相同客户 (客户优先，有余量)
+      const customerMatches = Object.entries(locationMap)
+        .map(([l, bSet]) => {
+          const cnt = bSet.size;
+          const cap = 18;
+          const attrs = locationDominantAttrs[l];
+          return { l, cnt, cap, attrs };
+        })
+        .filter(item => {
+          return item.l !== currentLoc &&
+                 !isInvalidTargetLocation(item.l) &&
+                 !item.l.toUpperCase().startsWith('H') &&
+                 item.cnt < item.cap &&
+                 item.attrs?.dominantCustomer === customerName;
+        });
+
+      if (customerMatches.length > 0) {
+        customerMatches.sort((a, b) => (b.cap - b.cnt) - (a.cap - a.cnt));
+        const bestCust = customerMatches[0];
+        return {
+          recommendedLoc: bestCust.l,
+          recommendationReason: `Move to ${bestCust.l}: matches customer (${customerName}), ${bestCust.cap - bestCust.cnt} slots avail.`
+        };
+      }
+
+      // 4. 三选：匹配相同功率档 (功率优先，有余量)
+      const powerMatches = Object.entries(locationMap)
+        .map(([l, bSet]) => {
+          const cnt = bSet.size;
+          const cap = 18;
+          const attrs = locationDominantAttrs[l];
+          return { l, cnt, cap, attrs };
+        })
+        .filter(item => {
+          return item.l !== currentLoc &&
+                 !isInvalidTargetLocation(item.l) &&
+                 !item.l.toUpperCase().startsWith('H') &&
+                 item.cnt < item.cap &&
+                 item.attrs?.dominantPower === power;
+        });
+
+      if (powerMatches.length > 0) {
+        powerMatches.sort((a, b) => (b.cap - b.cnt) - (a.cap - a.cnt));
+        const bestPower = powerMatches[0];
+        return {
+          recommendedLoc: bestPower.l,
+          recommendationReason: `Move to ${bestPower.l}: matches power (${power}), ${bestPower.cap - bestPower.cnt} slots avail.`
+        };
+      }
+
+      return {
+        recommendedLoc: 'No Match',
+        recommendationReason: 'No suitable regular location found (packaging/aisles excluded)'
+      };
+    };
+
+    // Helper: 寻找 H 库位 (专供 非A级品 分配，容量14，严格排除包装/通道/pending)
+    const findBestHLocation = (currentLoc: string, grade: string, customerName?: string) => {
+      const candidates = Object.entries(hOccupancyMap)
+        .filter(([l, info]) => {
+          return l !== currentLoc &&
+                 !isInvalidTargetLocation(l) &&
+                 l.toUpperCase().startsWith('H') &&
+                 info.count < 14;
+        })
+        .map(([l, info]) => ({
+          l,
+          count: info.count,
+          cap: 14,
+          avail: 14 - info.count,
+          grades: info.grades,
+          customers: info.customers
+        }));
+
+      if (candidates.length === 0) {
+        return {
+          recommendedLoc: 'No H-Loc Avail',
+          recommendationReason: 'H-zone capacity full (14 boxes/loc, packaging/aisles excluded)'
+        };
+      }
+
+      // 1. 同等级品已存在且有空余 (如 Grade B 归拢到同一 H库位)
+      const sameGradeMatches = candidates.filter(c => c.grades.has(grade));
+      if (sameGradeMatches.length > 0) {
+        sameGradeMatches.sort((a, b) => b.avail - a.avail);
+        const best = sameGradeMatches[0];
+        return {
+          recommendedLoc: best.l,
+          recommendationReason: `Move to H-location ${best.l}: consolidates Grade ${grade} (${best.avail} slots avail.)`
+        };
+      }
+
+      // 2. 空置全新的 H 库位 (count === 0)
+      const emptyH = candidates.filter(c => c.count === 0);
+      if (emptyH.length > 0) {
+        emptyH.sort((a, b) => compareLocations(a.l, b.l));
+        const bestEmpty = emptyH[0];
+        return {
+          recommendedLoc: bestEmpty.l,
+          recommendationReason: `Move to empty H-location ${bestEmpty.l}: designated for Non-A Grade (${bestEmpty.avail} slots avail.)`
+        };
+      }
+
+      // 3. 同客户的 H 库位
+      if (customerName && customerName !== '未映射客户') {
+        const sameCust = candidates.filter(c => c.customers.has(customerName));
+        if (sameCust.length > 0) {
+          sameCust.sort((a, b) => b.avail - a.avail);
+          const best = sameCust[0];
+          return {
+            recommendedLoc: best.l,
+            recommendationReason: `Move to H-location ${best.l}: matches customer (${customerName}), ${best.avail} slots avail.`
+          };
+        }
+      }
+
+      // 4. 任一仍有余位的 H 库位
+      candidates.sort((a, b) => b.avail - a.avail);
+      const bestAny = candidates[0];
+      return {
+        recommendedLoc: bestAny.l,
+        recommendationReason: `Move to H-location ${bestAny.l}: designated for Non-A Grade (${bestAny.avail} slots avail.)`
+      };
+    };
+
+    // A. 筛查 A 级别品需要迁移调整的箱号 (activeBoxes 来自 rows/Grade A)
     activeBoxes.forEach((bx) => {
       // A库位属于待出货，经常变动，不参与纠偏与拼位计算
       if (bx.location.toUpperCase().startsWith('A')) {
         return;
       }
 
+      // 检查情况 1: A 级别品误存放在 H 库位（H 库位专属于非 A 级品）
+      if (bx.location.toUpperCase().startsWith('H')) {
+        const rec = findBestRegularLocation(bx.location, bx.customerName, bx.power);
+        suggestions.push({
+          boxNo: bx.boxNo,
+          currentLoc: bx.location,
+          customerName: bx.customerName,
+          powerGrade: bx.power,
+          dominantCustomer: locationDominantAttrs[bx.location]?.dominantCustomer || 'Non-A Storage',
+          dominantPower: locationDominantAttrs[bx.location]?.dominantPower || '-',
+          mismatchType: 'A-Grade in Non-A Zone',
+          recommendedLoc: rec.recommendedLoc,
+          recommendationReason: rec.recommendedLoc === 'No Match' 
+            ? 'A-Grade stored in H-zone; no regular rack location available' 
+            : `Move out of H-zone to ${rec.recommendedLoc}: H is reserved for Non-A`
+        });
+        return;
+      }
+
+      // 检查情况 2: 存放在临时通道或待定库位 (包装-通道, WA, pending 等)
+      if (isInvalidTargetLocation(bx.location)) {
+        const rec = findBestRegularLocation(bx.location, bx.customerName, bx.power);
+        suggestions.push({
+          boxNo: bx.boxNo,
+          currentLoc: bx.location,
+          customerName: bx.customerName,
+          powerGrade: bx.power,
+          dominantCustomer: 'Temporary Lane',
+          dominantPower: '-',
+          mismatchType: 'Temporary Lane Storage',
+          recommendedLoc: rec.recommendedLoc,
+          recommendationReason: rec.recommendedLoc === 'No Match'
+            ? 'Stored in temporary lane; no regular rack location available'
+            : `Move from temporary lane to ${rec.recommendedLoc}: standard rack storage`
+        });
+        return;
+      }
+
+      // 检查情况 3: 常规库位内的客户与功率混存纠偏
       const locAttrs = locationDominantAttrs[bx.location];
       if (!locAttrs) return;
 
       const custMatch = bx.customerName === locAttrs.dominantCustomer;
       const powerMatch = bx.power === locAttrs.dominantPower;
 
-      // 如果客户不符，或者功率不符，且该库位存在多客户/多功率，则定义为需要迁移修正的箱子
       if (!custMatch || !powerMatch) {
         let mismatchType = '';
         if (!custMatch && !powerMatch) {
-          mismatchType = '客户与功率不一致';
+          mismatchType = 'Customer & Power Mismatch';
         } else if (!custMatch) {
-          mismatchType = '客户不一致';
+          mismatchType = 'Customer Mismatch';
         } else {
-          mismatchType = '功率不一致';
+          mismatchType = 'Power Mismatch';
         }
 
-        // 寻找推荐位置的逻辑
-        let recommendedLoc = '暂无匹配库位';
-        let recommendationReason = '未在系统内找到满足条件且有余位的配对库位';
-
-        // 1. 首要匹配：查找完全匹配目标客户和功率、且仍有剩余空位的库位
-        const perfectMatches = Object.entries(locationMap)
-          .map(([l, bSet]) => {
-            const cnt = bSet.size;
-            const cap = getPerfectCapacity(l);
-            const attrs = locationDominantAttrs[l];
-            return { l, cnt, cap, attrs };
-          })
-          .filter(item => {
-            return item.l !== bx.location &&
-                   item.l !== 'TBD' &&
-                   !item.l.toUpperCase().startsWith('A') &&
-                   item.cnt < item.cap &&
-                   item.attrs.dominantCustomer === bx.customerName &&
-                   item.attrs.dominantPower === bx.power;
-          });
-
-        if (perfectMatches.length > 0) {
-          perfectMatches.sort((a, b) => (b.cap - b.cnt) - (a.cap - a.cnt));
-          const best = perfectMatches[0];
-          recommendedLoc = best.l;
-          recommendationReason = `推荐转移至【${best.l}】，该库位主存【${bx.customerName}】且功率为【${bx.power}】，现余 ${best.cap - best.cnt} 箱可用`;
-        } else {
-          // 2. 备选匹配：寻找完全空置全新库位
-          const emptyLocs = Object.entries(locationMap)
-            .map(([l, bSet]) => {
-              const cap = getPerfectCapacity(l);
-              return { l, cnt: bSet.size, cap };
-            })
-            .filter(item => item.l !== bx.location && item.l !== 'TBD' && !item.l.toUpperCase().startsWith('A') && item.cnt === 0);
-
-          if (emptyLocs.length > 0) {
-            emptyLocs.sort((a, b) => compareLocations(a.l, b.l));
-
-            const bestEmpty = emptyLocs[0];
-            recommendedLoc = bestEmpty.l;
-            recommendationReason = `推荐转移至空置库位【${bestEmpty.l}】，可充当其专属独立库位`;
-          } else {
-            // 3. 次级匹配：仅匹配该客户（客户优先且有空间）
-            const customerMatches = Object.entries(locationMap)
-              .map(([l, bSet]) => {
-                const cnt = bSet.size;
-                const cap = getPerfectCapacity(l);
-                const attrs = locationDominantAttrs[l];
-                return { l, cnt, cap, attrs };
-              })
-              .filter(item => {
-                return item.l !== bx.location &&
-                       item.l !== 'TBD' &&
-                       !item.l.toUpperCase().startsWith('A') &&
-                       item.cnt < item.cap &&
-                       item.attrs.dominantCustomer === bx.customerName;
-              });
-
-            if (customerMatches.length > 0) {
-              customerMatches.sort((a, b) => (b.cap - b.cnt) - (a.cap - a.cnt));
-              const bestCust = customerMatches[0];
-              recommendedLoc = bestCust.l;
-              recommendationReason = `推荐转移至【${bestCust.l}】以匹配主客户【${bx.customerName}】空间，现余 ${bestCust.cap - bestCust.cnt} 箱可用`;
-            } else {
-              // 4. 三级匹配：仅匹配功率档
-              const powerMatches = Object.entries(locationMap)
-                .map(([l, bSet]) => {
-                  const cnt = bSet.size;
-                  const cap = getPerfectCapacity(l);
-                  const attrs = locationDominantAttrs[l];
-                  return { l, cnt, cap, attrs };
-                })
-                .filter(item => {
-                  return item.l !== bx.location &&
-                         item.l !== 'TBD' &&
-                         !item.l.toUpperCase().startsWith('A') &&
-                         item.cnt < item.cap &&
-                         item.attrs.dominantPower === bx.power;
-                });
-
-              if (powerMatches.length > 0) {
-                powerMatches.sort((a, b) => (b.cap - b.cnt) - (a.cap - a.cnt));
-                const bestPower = powerMatches[0];
-                recommendedLoc = bestPower.l;
-                recommendationReason = `推荐转移至【${bestPower.l}】以配对功率档【${bx.power}】，现余 ${bestPower.cap - bestPower.cnt} 箱可用`;
-              }
-            }
-          }
-        }
+        const rec = findBestRegularLocation(bx.location, bx.customerName, bx.power);
 
         suggestions.push({
           boxNo: bx.boxNo,
@@ -1210,8 +1383,33 @@ export default function App() {
           dominantCustomer: locAttrs.dominantCustomer,
           dominantPower: locAttrs.dominantPower,
           mismatchType,
-          recommendedLoc,
-          recommendationReason
+          recommendedLoc: rec.recommendedLoc,
+          recommendationReason: rec.recommendationReason
+        });
+      }
+    });
+
+    // B. 筛查 非A级别品 (B, F, R 等): 若当前不在 H 库位，则统一推荐搬迁至 H 库位
+    nonARows.forEach((item) => {
+      const loc = normalizeLocationName(item.location) || 'TBD';
+      // 待出货暂存区（A 开头）不参与重定位
+      if (loc.toUpperCase().startsWith('A')) {
+        return;
+      }
+
+      // 若非A级品当前不在 H 库位 (例如散落在 C~G, K~O, WA, 包装-通道, pending 等)
+      if (!loc.toUpperCase().startsWith('H')) {
+        const rec = findBestHLocation(loc, item.grade, item.customerName);
+        suggestions.push({
+          boxNo: item.boxNo,
+          currentLoc: loc,
+          customerName: item.customerName || '未映射客户',
+          powerGrade: item.power || '未知',
+          dominantCustomer: locationDominantAttrs[loc]?.dominantCustomer || 'Mixed',
+          dominantPower: locationDominantAttrs[loc]?.dominantPower || '-',
+          mismatchType: 'Non-A Grade Storage',
+          recommendedLoc: rec.recommendedLoc,
+          recommendationReason: rec.recommendationReason
         });
       }
     });
@@ -1266,8 +1464,13 @@ export default function App() {
     } catch (e) {
       console.error('Failed to clear orderCustomerMap from localStorage', e);
     }
+    const updatedNonA = nonAGradeList.map(item => ({
+      ...item,
+      customerName: '未映射客户'
+    }));
+    setNonAGradeList(updatedNonA);
     if (data.length > 0) {
-      performAnalysis(data, {});
+      performAnalysis(data, {}, updatedNonA);
     }
   };
 
@@ -1630,13 +1833,13 @@ export default function App() {
       { header: 'No. (序号)', key: 'index', width: 10 },
       { header: 'Box No. (箱号)', key: 'boxNo', width: 22 },
       { header: 'Current Loc (当前库位)', key: 'currentLoc', width: 18 },
-      { header: 'Mismatch (偏差类型)', key: 'mismatchType', width: 18 },
+      { header: 'Mismatch (偏差类型)', key: 'mismatchType', width: 26 },
       { header: 'Customer (客户)', key: 'customerName', width: 24 },
       { header: 'Power (功率档)', key: 'powerGrade', width: 15 },
       { header: 'Dominant Cust (主存客户)', key: 'dominantCustomer', width: 24 },
       { header: 'Dominant Power (主存功率)', key: 'dominantPower', width: 16 },
       { header: 'Target Loc (推荐库位)', key: 'recommendedLoc', width: 18 },
-      { header: 'Reason (调整说明)', key: 'recommendationReason', width: 55 }
+      { header: 'Reason (调整说明)', key: 'recommendationReason', width: 68 }
     ];
 
     relocationSuggestions.forEach((s, i) => {
@@ -3290,17 +3493,26 @@ export default function App() {
                                   </div>
                                 </td>
                                 <td className="px-5 py-3">
-                                  <span className="inline-block px-1.5 py-0.5 font-bold text-[9px] rounded bg-amber-50 text-amber-700 border border-amber-200">
+                                  <span className={cn(
+                                    "inline-block px-2 py-0.5 font-bold text-[9px] rounded border whitespace-nowrap",
+                                    row.mismatchType.includes('Non-A') ? "bg-purple-50 text-purple-700 border-purple-200" :
+                                    row.mismatchType.includes('Zone') || row.mismatchType.includes('Grade') ? "bg-rose-50 text-rose-700 border-rose-200" :
+                                    row.mismatchType.includes('Temp') ? "bg-blue-50 text-blue-700 border-blue-200" :
+                                    "bg-amber-50 text-amber-700 border-amber-200"
+                                  )}>
                                     {row.mismatchType}
                                   </span>
                                 </td>
                                 <td className="px-5 py-3 pr-8">
                                   <div className="flex flex-col">
-                                    <span className="font-bold text-emerald-600 font-mono flex items-center gap-1">
+                                    <span className={cn(
+                                      "font-bold font-mono flex items-center gap-1",
+                                      row.recommendedLoc === 'No Match' || row.recommendedLoc.includes('No') ? "text-slate-400" : "text-emerald-600"
+                                    )}>
                                       <ArrowRight className="w-3 h-3" />
                                       {row.recommendedLoc}
                                     </span>
-                                    <span className="text-[9px] text-slate-400 max-w-xs">
+                                    <span className="text-[9px] text-slate-500 max-w-md leading-relaxed">
                                       {row.recommendationReason}
                                     </span>
                                   </div>
