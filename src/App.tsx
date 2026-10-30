@@ -970,7 +970,7 @@ export default function App() {
         const customerMapForLoc = locationCustomerData[location] || {};
         const customersDist: Record<string, number> = {};
         Object.entries(customerMapForLoc).forEach(([cust, boxes]) => {
-          if (boxes.size > maxCustomerCount) {
+          if (boxes.size > 0) {
             customersDist[cust] = boxes.size;
           }
         });
