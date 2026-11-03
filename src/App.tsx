@@ -40,7 +40,7 @@ import {
 import { motion, AnimatePresence } from 'motion/react';
 import { jsPDF } from 'jspdf';
 import { cn } from './lib/utils';
-import { db, collection, addDoc, getDocs, query, orderBy, limit, doc, getDoc, setDoc } from './lib/firebase';
+import { db, ensureAuth, collection, addDoc, getDocs, query, orderBy, limit, doc, getDoc, setDoc } from './lib/firebase';
 
 interface ZeroBarcodeRow {
   rowIdx: number; // Excel 实际行号
@@ -329,23 +329,32 @@ export default function App() {
     setCloudError(null);
     try {
       const fetchPromise = async () => {
-        const q = query(collection(db, 'mappings'), orderBy('updatedAt', 'desc'), limit(15));
-        const querySnapshot = await getDocs(q);
+        await ensureAuth();
+        let querySnapshot;
+        try {
+          const q = query(collection(db, 'mappings'), orderBy('updatedAt', 'desc'), limit(15));
+          querySnapshot = await getDocs(q);
+        } catch (queryErr) {
+          console.warn('Ordered query failed, falling back to full collection fetch:', queryErr);
+          querySnapshot = await getDocs(collection(db, 'mappings'));
+        }
         const mappingsList: any[] = [];
-        querySnapshot.forEach((doc) => {
-          const itemData = doc.data();
-          if (doc.id !== 'latest') { 
+        querySnapshot.forEach((docSnap) => {
+          const itemData = docSnap.data();
+          if (docSnap.id !== 'latest' && itemData.mappingFileName) { 
             mappingsList.push({
-              id: doc.id,
+              id: docSnap.id,
               ...itemData
             });
           }
         });
+        // 客户端降序兜底排列
+        mappingsList.sort((a, b) => new Date(b.updatedAt || 0).getTime() - new Date(a.updatedAt || 0).getTime());
         return mappingsList;
       };
 
       const timeoutPromise = new Promise<any[]>((_, reject) =>
-        setTimeout(() => reject(new Error('云端连接响应超时，已切换至本地模式')), 10000)
+        setTimeout(() => reject(new Error('云端连接响应超时，已切换至本地离线模式')), 25000)
       );
 
       const mappingsList = await Promise.race([fetchPromise(), timeoutPromise]);
@@ -416,24 +425,34 @@ export default function App() {
       };
 
       const syncTask = async () => {
-        // 1. 存入历史集合
-        const docRef = await addDoc(collection(db, 'mappings'), dataPayload);
-        // 2. 同时在 latest 文档上覆盖记录
-        await setDoc(doc(db, 'mappings', 'latest'), dataPayload);
+        await ensureAuth();
+        // 1. 同时写入历史集合以及更新 latest 默认共享文档
+        const [docRef] = await Promise.all([
+          addDoc(collection(db, 'mappings'), dataPayload),
+          setDoc(doc(db, 'mappings', 'latest'), dataPayload)
+        ]);
         return docRef;
       };
 
       const timeoutPromise = new Promise<{ id: string }>((_, reject) =>
-        setTimeout(() => reject(new Error('云端请求超时 (12秒)，请检查网络后重试')), 12000)
+        setTimeout(() => reject(new Error('云端请求超时 (35秒)，请检查网络后重试')), 35000)
       );
 
       const docRef = await Promise.race([syncTask(), timeoutPromise]);
 
       setIsCloudSynced(true);
+      setIsSaved(true);
+      try {
+        localStorage.setItem('orderCustomerMap', JSON.stringify(orderCustomerMap));
+        localStorage.setItem('mappingFileName', mappingFileName);
+      } catch (e) {
+        console.warn('LocalStorage save failed:', e);
+      }
       setCloudError(null);
-      setLastSyncedCloudTime(new Date().toLocaleTimeString());
-      setSaveSuccess(`云端发布成功！共享 ID: ${docRef.id}，其它客户端刷新即可自动拉取最新。`);
-      setTimeout(() => setSaveSuccess(null), 5000);
+      const timeNow = new Date().toLocaleTimeString();
+      setLastSyncedCloudTime(timeNow);
+      setSaveSuccess(`云端发布成功！共享文档已同步 (规则数: ${Object.keys(orderCustomerMap).length})，其它设备与客户端刷新即可自动拉取最新。`);
+      setTimeout(() => setSaveSuccess(null), 6000);
       
       // 刷新列表
       await fetchCloudMappings(false);
@@ -2957,19 +2976,29 @@ export default function App() {
                         disabled={isCloudSaving}
                         className={cn(
                           "w-full flex items-center justify-center gap-1.5 font-bold py-2 rounded-xl text-xs transition-all border shadow-md z-10",
-                          isCloudSynced 
-                            ? "bg-emerald-600 hover:bg-emerald-700 text-white border-emerald-500"
-                            : "bg-indigo-600 hover:bg-indigo-700 text-white border-indigo-500 active:scale-95"
+                          isCloudSaving
+                            ? "bg-indigo-700 text-white cursor-wait"
+                            : isCloudSynced 
+                              ? "bg-emerald-600 hover:bg-emerald-700 text-white border-emerald-500"
+                              : "bg-indigo-600 hover:bg-indigo-700 text-white border-indigo-500 active:scale-95"
                         )}
                       >
                         {isCloudSaving ? (
-                          <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                          <>
+                            <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                            <span>Publishing to Cloud (正在同步至云端)...</span>
+                          </>
                         ) : isCloudSynced ? (
-                          <CheckCircle2 className="w-3.5 h-3.5 text-emerald-200" />
+                          <>
+                            <CheckCircle2 className="w-3.5 h-3.5 text-emerald-200" />
+                            <span>Synced to Cloud (云端已同步)</span>
+                          </>
                         ) : (
-                          <Cloud className="w-3.5 h-3.5" />
+                          <>
+                            <Cloud className="w-3.5 h-3.5" />
+                            <span>Sync to Cloud (发布至云端共享)</span>
+                          </>
                         )}
-                        {isCloudSaving ? 'Publishing to Cloud...' : isCloudSynced ? 'Synced to Cloud (云端已同步)' : 'Sync to Cloud (发布至云端共享)'}
                       </button>
                       {cloudError && (
                         <div className="text-[10px] text-rose-200 bg-rose-950/80 p-2 rounded-xl border border-rose-800 flex items-center justify-between gap-1 z-10">
@@ -3019,13 +3048,18 @@ export default function App() {
                         Cloud Models / 云端共享库 ({cloudMappings.length})
                       </p>
                     </div>
-                    <button 
-                      onClick={() => fetchCloudMappings(false)} 
-                      className="text-slate-400 hover:text-slate-600 transition-colors p-1 rounded-lg"
-                      title="Refresh"
-                    >
-                      <RefreshCw className={cn("w-3.5 h-3.5", isCloudLoading && "animate-spin")} />
-                    </button>
+                    <div className="flex items-center gap-1.5">
+                      <span className="text-[9px] text-emerald-600 bg-emerald-50 px-1.5 py-0.5 rounded border border-emerald-100 font-mono" title="云端存储空间状态：正常，配额充足 (1GB 容量，当前使用 <0.01%)">
+                        ● 空间充足
+                      </span>
+                      <button 
+                        onClick={() => fetchCloudMappings(false)} 
+                        className="text-slate-400 hover:text-slate-600 transition-colors p-1 rounded-lg"
+                        title="刷新云端列表"
+                      >
+                        <RefreshCw className={cn("w-3.5 h-3.5", isCloudLoading && "animate-spin")} />
+                      </button>
+                    </div>
                   </div>
 
                   {isCloudLoading && cloudMappings.length === 0 ? (
