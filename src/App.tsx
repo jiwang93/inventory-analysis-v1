@@ -100,6 +100,16 @@ interface CustomerStat {
   locations: string[];
 }
 
+interface TargetRecommendation {
+  loc: string;
+  reason: string;
+  isExactMatch: boolean;
+  currentCount: number;
+  postMoveCount: number;
+  capacity: number;
+  matchTypeDesc: string;
+}
+
 interface RelocationSuggestion {
   boxNo: string;
   currentLoc: string;
@@ -110,6 +120,8 @@ interface RelocationSuggestion {
   mismatchType: string;
   recommendedLoc: string;
   recommendationReason: string;
+  targetRecommendations?: TargetRecommendation[];
+  moveCount?: number;
 }
 
 interface NonAGradeRow {
@@ -1140,174 +1152,268 @@ export default function App() {
     const suggestions: RelocationSuggestion[] = [];
 
     // Helper: 寻找常规推荐库位 (供 A 级品使用，容量18，严格排除 H库位 及 包装/WA/pending)
-    const findBestRegularLocation = (currentLoc: string, customerName: string, power: string) => {
-      // 1. 首选：完全匹配客户与功率档且有余量 (< 18)
-      const perfectMatches = Object.entries(locationMap)
-        .map(([l, bSet]) => {
-          const cnt = bSet.size;
-          const cap = 18;
-          const attrs = locationDominantAttrs[l];
-          return { l, cnt, cap, attrs };
-        })
-        .filter(item => {
-          return item.l !== currentLoc &&
-                 !isInvalidTargetLocation(item.l) &&
-                 !item.l.toUpperCase().startsWith('H') &&
-                 item.cnt < item.cap &&
-                 item.attrs?.dominantCustomer === customerName &&
-                 item.attrs?.dominantPower === power;
-        });
+    // 算法核心原则：
+    // 1. 最优先级是“正好匹配凑足18箱” (例如待移动2箱，目标已有16箱，拼成16+2=18满托满架)
+    // 2. 避免单箱孤独占用全新空库位，优先靠拢归并已有存量，最大化凑足18箱
+    // 3. 优先级相同或箱数相同时，严格按照仓库基准 C-N 货架走廊物理顺序排布库位
+    // 4. 给出至多 3 个最佳备选目标库位（如果没有三个，有多少给多少）
+    const findTopRegularLocations = (currentLoc: string, customerName: string, power: string, moveCount: number) => {
+      const cap = 18;
+      const effectiveMoveCount = Math.max(1, Math.min(cap, moveCount));
 
-      if (perfectMatches.length > 0) {
-        perfectMatches.sort((a, b) => (b.cap - b.cnt) - (a.cap - a.cnt));
-        const best = perfectMatches[0];
+      const candidateList: Array<{
+        l: string;
+        cnt: number;
+        cap: number;
+        avail: number;
+        postMoveCount: number;
+        isExactMatch: boolean;
+        priority: number;
+        matchDesc: string;
+      }> = [];
+
+      Object.entries(locationMap).forEach(([l, bSet]) => {
+        if (l === currentLoc) return;
+        if (isInvalidTargetLocation(l)) return;
+        if (l.toUpperCase().startsWith('H')) return; // H 库位专留非A级
+
+        const cnt = bSet.size;
+        const avail = cap - cnt;
+        if (avail < effectiveMoveCount) return; // 容量不足以同时容纳该组批次，避免超容
+
+        const postMoveCount = cnt + effectiveMoveCount;
+        const isExactMatch = postMoveCount === cap; // 正好凑足 18 箱！
+        const attrs = locationDominantAttrs[l];
+        const matchCust = attrs?.dominantCustomer === customerName;
+        const matchPower = attrs?.dominantPower === power;
+        const isEmpty = cnt === 0;
+
+        let priority = 100;
+        let matchDesc = '';
+
+        if (isExactMatch && !isEmpty) {
+          // 正好拼成 18 箱（满托满位，最顶级匹配）
+          if (matchCust && matchPower) {
+            priority = 1;
+            matchDesc = `EXACT 18 MATCH: ${cnt}+${effectiveMoveCount}=18 boxes (Client & Power Match)`;
+          } else if (matchCust) {
+            priority = 2;
+            matchDesc = `EXACT 18 MATCH: ${cnt}+${effectiveMoveCount}=18 boxes (Client Match)`;
+          } else if (matchPower) {
+            priority = 3;
+            matchDesc = `EXACT 18 MATCH: ${cnt}+${effectiveMoveCount}=18 boxes (Power Match)`;
+          } else {
+            priority = 4;
+            matchDesc = `EXACT 18 MATCH: ${cnt}+${effectiveMoveCount}=18 boxes (Consolidates to 18)`;
+          }
+        } else if (!isEmpty) {
+          // 未达正好18箱但已有在库货物（合并存量，避免单箱占用新库位，越接近18越优先）
+          if (matchCust && matchPower) {
+            priority = 10;
+            matchDesc = `Matches Client & Power (${cnt}+${effectiveMoveCount}=${postMoveCount}/18 boxes)`;
+          } else if (matchCust) {
+            priority = 20;
+            matchDesc = `Matches Client (${cnt}+${effectiveMoveCount}=${postMoveCount}/18 boxes)`;
+          } else if (matchPower) {
+            priority = 30;
+            matchDesc = `Matches Power (${cnt}+${effectiveMoveCount}=${postMoveCount}/18 boxes)`;
+          } else {
+            priority = 40;
+            matchDesc = `Consolidates (${cnt}+${effectiveMoveCount}=${postMoveCount}/18 boxes)`;
+          }
+        } else {
+          // 全新空置库位 (cnt === 0)
+          if (isExactMatch) {
+            priority = 5;
+            matchDesc = `EXACT 18: Full Fresh Rack (${effectiveMoveCount}/18 boxes)`;
+          } else {
+            // 普通箱数放入空库位，作为保底方案（避免单箱孤独占用一整库位）
+            priority = 50;
+            matchDesc = `Empty Rack (${cnt}+${effectiveMoveCount}=${postMoveCount}/18 boxes)`;
+          }
+        }
+
+        candidateList.push({
+          l,
+          cnt,
+          cap,
+          avail,
+          postMoveCount,
+          isExactMatch,
+          priority,
+          matchDesc
+        });
+      });
+
+      // 综合精细排序
+      candidateList.sort((a, b) => {
+        // 1. 优先级组优先（1~4 为正好拼成18箱，10~40为存量合并，50为空库位）
+        if (a.priority !== b.priority) {
+          return a.priority - b.priority;
+        }
+        // 2. 相同优先级内，合并存量时越接近18箱越优先（postMoveCount 降序）
+        if (a.postMoveCount !== b.postMoveCount) {
+          return b.postMoveCount - a.postMoveCount;
+        }
+        // 3. 严格遵循 C-N 仓库货架通道物理顺序
+        return compareLocations(a.l, b.l);
+      });
+
+      const topCandidates = candidateList.slice(0, 3);
+
+      if (topCandidates.length === 0) {
         return {
-          recommendedLoc: best.l,
-          recommendationReason: `Move to ${best.l}: matches customer (${customerName}) & power (${power}), ${best.cap - best.cnt} slots avail.`
+          recommendedLoc: 'No Match',
+          recommendationReason: 'No regular rack location with capacity available (aisles/packaging excluded)',
+          targetRecommendations: [],
+          moveCount: effectiveMoveCount
         };
       }
 
-      // 2. 备选：全新完全空置常规库位 (cnt === 0)
-      const emptyLocs = Object.entries(locationMap)
-        .map(([l, bSet]) => ({ l, cnt: bSet.size, cap: 18 }))
-        .filter(item => {
-          return item.l !== currentLoc &&
-                 !isInvalidTargetLocation(item.l) &&
-                 !item.l.toUpperCase().startsWith('H') &&
-                 item.cnt === 0;
-        });
+      const targetRecs: TargetRecommendation[] = topCandidates.map(c => ({
+        loc: c.l,
+        reason: c.matchDesc,
+        isExactMatch: c.isExactMatch,
+        currentCount: c.cnt,
+        postMoveCount: c.postMoveCount,
+        capacity: c.cap,
+        matchTypeDesc: c.matchDesc
+      }));
 
-      if (emptyLocs.length > 0) {
-        emptyLocs.sort((a, b) => compareLocations(a.l, b.l));
-        const bestEmpty = emptyLocs[0];
-        return {
-          recommendedLoc: bestEmpty.l,
-          recommendationReason: `Move to empty location ${bestEmpty.l}: dedicated storage (${bestEmpty.cap - bestEmpty.cnt} slots avail.)`
-        };
-      }
-
-      // 3. 次选：匹配相同客户 (客户优先，有余量)
-      const customerMatches = Object.entries(locationMap)
-        .map(([l, bSet]) => {
-          const cnt = bSet.size;
-          const cap = 18;
-          const attrs = locationDominantAttrs[l];
-          return { l, cnt, cap, attrs };
-        })
-        .filter(item => {
-          return item.l !== currentLoc &&
-                 !isInvalidTargetLocation(item.l) &&
-                 !item.l.toUpperCase().startsWith('H') &&
-                 item.cnt < item.cap &&
-                 item.attrs?.dominantCustomer === customerName;
-        });
-
-      if (customerMatches.length > 0) {
-        customerMatches.sort((a, b) => (b.cap - b.cnt) - (a.cap - a.cnt));
-        const bestCust = customerMatches[0];
-        return {
-          recommendedLoc: bestCust.l,
-          recommendationReason: `Move to ${bestCust.l}: matches customer (${customerName}), ${bestCust.cap - bestCust.cnt} slots avail.`
-        };
-      }
-
-      // 4. 三选：匹配相同功率档 (功率优先，有余量)
-      const powerMatches = Object.entries(locationMap)
-        .map(([l, bSet]) => {
-          const cnt = bSet.size;
-          const cap = 18;
-          const attrs = locationDominantAttrs[l];
-          return { l, cnt, cap, attrs };
-        })
-        .filter(item => {
-          return item.l !== currentLoc &&
-                 !isInvalidTargetLocation(item.l) &&
-                 !item.l.toUpperCase().startsWith('H') &&
-                 item.cnt < item.cap &&
-                 item.attrs?.dominantPower === power;
-        });
-
-      if (powerMatches.length > 0) {
-        powerMatches.sort((a, b) => (b.cap - b.cnt) - (a.cap - a.cnt));
-        const bestPower = powerMatches[0];
-        return {
-          recommendedLoc: bestPower.l,
-          recommendationReason: `Move to ${bestPower.l}: matches power (${power}), ${bestPower.cap - bestPower.cnt} slots avail.`
-        };
-      }
+      const recommendedLocStr = targetRecs.map((t, idx) => `#${idx + 1} ${t.loc}${t.isExactMatch ? ' [Exact 18]' : ''}`).join(' | ');
+      const reasonStr = targetRecs.map((t, idx) => `${idx + 1}. ${t.loc}: ${t.matchTypeDesc}`).join('; ');
 
       return {
-        recommendedLoc: 'No Match',
-        recommendationReason: 'No suitable regular location found (packaging/aisles excluded)'
+        recommendedLoc: recommendedLocStr,
+        recommendationReason: reasonStr,
+        targetRecommendations: targetRecs,
+        moveCount: effectiveMoveCount
       };
     };
 
     // Helper: 寻找 H 库位 (专供 非A级品 分配，容量14，严格排除包装/通道/pending)
-    const findBestHLocation = (currentLoc: string, grade: string, customerName?: string) => {
-      const candidates = Object.entries(hOccupancyMap)
-        .filter(([l, info]) => {
-          return l !== currentLoc &&
-                 !isInvalidTargetLocation(l) &&
-                 l.toUpperCase().startsWith('H') &&
-                 info.count < 14;
-        })
-        .map(([l, info]) => ({
-          l,
-          count: info.count,
-          cap: 14,
-          avail: 14 - info.count,
-          grades: info.grades,
-          customers: info.customers
-        }));
+    const findTopHLocations = (currentLoc: string, grade: string, customerName: string | undefined, moveCount: number) => {
+      const cap = 14;
+      const effectiveMoveCount = Math.max(1, Math.min(cap, moveCount));
 
-      if (candidates.length === 0) {
+      const candidateList: Array<{
+        l: string;
+        cnt: number;
+        cap: number;
+        avail: number;
+        postMoveCount: number;
+        isExactMatch: boolean;
+        priority: number;
+        matchDesc: string;
+      }> = [];
+
+      Object.entries(hOccupancyMap).forEach(([l, info]) => {
+        if (l === currentLoc) return;
+        if (isInvalidTargetLocation(l)) return;
+        if (!l.toUpperCase().startsWith('H')) return;
+
+        const cnt = info.count;
+        const avail = cap - cnt;
+        if (avail < effectiveMoveCount) return;
+
+        const postMoveCount = cnt + effectiveMoveCount;
+        const isExactMatch = postMoveCount === cap;
+        const hasSameGrade = info.grades.has(grade);
+        const hasSameCust = customerName && customerName !== '未映射客户' && info.customers.has(customerName);
+        const isEmpty = cnt === 0;
+
+        let priority = 100;
+        let matchDesc = '';
+
+        if (isExactMatch && !isEmpty) {
+          if (hasSameGrade && hasSameCust) {
+            priority = 1;
+            matchDesc = `EXACT 14 MATCH: ${cnt}+${effectiveMoveCount}=14 boxes (Grade ${grade} & Client Match)`;
+          } else if (hasSameGrade) {
+            priority = 2;
+            matchDesc = `EXACT 14 MATCH: ${cnt}+${effectiveMoveCount}=14 boxes (Grade ${grade} Consolidates to 14)`;
+          } else if (hasSameCust) {
+            priority = 3;
+            matchDesc = `EXACT 14 MATCH: ${cnt}+${effectiveMoveCount}=14 boxes (Client Match)`;
+          } else {
+            priority = 4;
+            matchDesc = `EXACT 14 MATCH: ${cnt}+${effectiveMoveCount}=14 boxes (Fills H-Rack)`;
+          }
+        } else if (!isEmpty) {
+          if (hasSameGrade && hasSameCust) {
+            priority = 10;
+            matchDesc = `Grade ${grade} & Client Match (${cnt}+${effectiveMoveCount}=${postMoveCount}/14 boxes)`;
+          } else if (hasSameGrade) {
+            priority = 20;
+            matchDesc = `Consolidates Grade ${grade} (${cnt}+${effectiveMoveCount}=${postMoveCount}/14 boxes)`;
+          } else if (hasSameCust) {
+            priority = 30;
+            matchDesc = `Matches Client (${cnt}+${effectiveMoveCount}=${postMoveCount}/14 boxes)`;
+          } else {
+            priority = 40;
+            matchDesc = `Consolidates Non-A (${cnt}+${effectiveMoveCount}=${postMoveCount}/14 boxes)`;
+          }
+        } else {
+          if (isExactMatch) {
+            priority = 5;
+            matchDesc = `EXACT 14: Full Fresh H-Rack (${effectiveMoveCount}/14 boxes)`;
+          } else {
+            priority = 50;
+            matchDesc = `Empty H-Rack (${cnt}+${effectiveMoveCount}=${postMoveCount}/14 boxes)`;
+          }
+        }
+
+        candidateList.push({
+          l,
+          cnt,
+          cap,
+          avail,
+          postMoveCount,
+          isExactMatch,
+          priority,
+          matchDesc
+        });
+      });
+
+      candidateList.sort((a, b) => {
+        if (a.priority !== b.priority) {
+          return a.priority - b.priority;
+        }
+        if (a.postMoveCount !== b.postMoveCount) {
+          return b.postMoveCount - a.postMoveCount;
+        }
+        return compareLocations(a.l, b.l);
+      });
+
+      const topCandidates = candidateList.slice(0, 3);
+
+      if (topCandidates.length === 0) {
         return {
           recommendedLoc: 'No H-Loc Avail',
-          recommendationReason: 'H-zone capacity full (14 boxes/loc, packaging/aisles excluded)'
+          recommendationReason: 'H-zone capacity full (14 boxes/loc, aisles/packaging excluded)',
+          targetRecommendations: [],
+          moveCount: effectiveMoveCount
         };
       }
 
-      // 1. 同等级品已存在且有空余 (如 Grade B 归拢到同一 H库位)
-      const sameGradeMatches = candidates.filter(c => c.grades.has(grade));
-      if (sameGradeMatches.length > 0) {
-        sameGradeMatches.sort((a, b) => b.avail - a.avail);
-        const best = sameGradeMatches[0];
-        return {
-          recommendedLoc: best.l,
-          recommendationReason: `Move to H-location ${best.l}: consolidates Grade ${grade} (${best.avail} slots avail.)`
-        };
-      }
+      const targetRecs: TargetRecommendation[] = topCandidates.map(c => ({
+        loc: c.l,
+        reason: c.matchDesc,
+        isExactMatch: c.isExactMatch,
+        currentCount: c.cnt,
+        postMoveCount: c.postMoveCount,
+        capacity: c.cap,
+        matchTypeDesc: c.matchDesc
+      }));
 
-      // 2. 空置全新的 H 库位 (count === 0)
-      const emptyH = candidates.filter(c => c.count === 0);
-      if (emptyH.length > 0) {
-        emptyH.sort((a, b) => compareLocations(a.l, b.l));
-        const bestEmpty = emptyH[0];
-        return {
-          recommendedLoc: bestEmpty.l,
-          recommendationReason: `Move to empty H-location ${bestEmpty.l}: designated for Non-A Grade (${bestEmpty.avail} slots avail.)`
-        };
-      }
+      const recommendedLocStr = targetRecs.map((t, idx) => `#${idx + 1} ${t.loc}${t.isExactMatch ? ' [Exact 14]' : ''}`).join(' | ');
+      const reasonStr = targetRecs.map((t, idx) => `${idx + 1}. ${t.loc}: ${t.matchTypeDesc}`).join('; ');
 
-      // 3. 同客户的 H 库位
-      if (customerName && customerName !== '未映射客户') {
-        const sameCust = candidates.filter(c => c.customers.has(customerName));
-        if (sameCust.length > 0) {
-          sameCust.sort((a, b) => b.avail - a.avail);
-          const best = sameCust[0];
-          return {
-            recommendedLoc: best.l,
-            recommendationReason: `Move to H-location ${best.l}: matches customer (${customerName}), ${best.avail} slots avail.`
-          };
-        }
-      }
-
-      // 4. 任一仍有余位的 H 库位
-      candidates.sort((a, b) => b.avail - a.avail);
-      const bestAny = candidates[0];
       return {
-        recommendedLoc: bestAny.l,
-        recommendationReason: `Move to H-location ${bestAny.l}: designated for Non-A Grade (${bestAny.avail} slots avail.)`
+        recommendedLoc: recommendedLocStr,
+        recommendationReason: reasonStr,
+        targetRecommendations: targetRecs,
+        moveCount: effectiveMoveCount
       };
     };
 
@@ -1318,9 +1424,13 @@ export default function App() {
         return;
       }
 
+      // 计算同一库位中同客户、同功率档需同时迁移的箱数批次 (例如2箱=1托)
+      const groupBoxes = activeBoxes.filter(b => b.location === bx.location && b.customerName === bx.customerName && b.power === bx.power);
+      const moveCount = groupBoxes.length > 0 ? groupBoxes.length : 1;
+
       // 检查情况 1: A 级别品误存放在 H 库位（H 库位专属于非 A 级品）
       if (bx.location.toUpperCase().startsWith('H')) {
-        const rec = findBestRegularLocation(bx.location, bx.customerName, bx.power);
+        const rec = findTopRegularLocations(bx.location, bx.customerName, bx.power, moveCount);
         suggestions.push({
           boxNo: bx.boxNo,
           currentLoc: bx.location,
@@ -1330,16 +1440,16 @@ export default function App() {
           dominantPower: locationDominantAttrs[bx.location]?.dominantPower || '-',
           mismatchType: 'A-Grade in Non-A Zone',
           recommendedLoc: rec.recommendedLoc,
-          recommendationReason: rec.recommendedLoc === 'No Match' 
-            ? 'A-Grade stored in H-zone; no regular rack location available' 
-            : `Move out of H-zone to ${rec.recommendedLoc}: H is reserved for Non-A`
+          recommendationReason: rec.recommendationReason,
+          targetRecommendations: rec.targetRecommendations,
+          moveCount: rec.moveCount
         });
         return;
       }
 
       // 检查情况 2: 存放在临时通道或待定库位 (包装-通道, WA, pending 等)
       if (isInvalidTargetLocation(bx.location)) {
-        const rec = findBestRegularLocation(bx.location, bx.customerName, bx.power);
+        const rec = findTopRegularLocations(bx.location, bx.customerName, bx.power, moveCount);
         suggestions.push({
           boxNo: bx.boxNo,
           currentLoc: bx.location,
@@ -1349,9 +1459,9 @@ export default function App() {
           dominantPower: '-',
           mismatchType: 'Temporary Lane Storage',
           recommendedLoc: rec.recommendedLoc,
-          recommendationReason: rec.recommendedLoc === 'No Match'
-            ? 'Stored in temporary lane; no regular rack location available'
-            : `Move from temporary lane to ${rec.recommendedLoc}: standard rack storage`
+          recommendationReason: rec.recommendationReason,
+          targetRecommendations: rec.targetRecommendations,
+          moveCount: rec.moveCount
         });
         return;
       }
@@ -1373,7 +1483,7 @@ export default function App() {
           mismatchType = 'Power Mismatch';
         }
 
-        const rec = findBestRegularLocation(bx.location, bx.customerName, bx.power);
+        const rec = findTopRegularLocations(bx.location, bx.customerName, bx.power, moveCount);
 
         suggestions.push({
           boxNo: bx.boxNo,
@@ -1384,7 +1494,9 @@ export default function App() {
           dominantPower: locAttrs.dominantPower,
           mismatchType,
           recommendedLoc: rec.recommendedLoc,
-          recommendationReason: rec.recommendationReason
+          recommendationReason: rec.recommendationReason,
+          targetRecommendations: rec.targetRecommendations,
+          moveCount: rec.moveCount
         });
       }
     });
@@ -1397,9 +1509,13 @@ export default function App() {
         return;
       }
 
+      // 计算该非A品同等级、同客户的批次箱数
+      const groupBoxes = nonARows.filter(b => normalizeLocationName(b.location) === loc && b.grade === item.grade && b.customerName === item.customerName);
+      const moveCount = groupBoxes.length > 0 ? groupBoxes.length : 1;
+
       // 若非A级品当前不在 H 库位 (例如散落在 C~G, K~O, WA, 包装-通道, pending 等)
       if (!loc.toUpperCase().startsWith('H')) {
-        const rec = findBestHLocation(loc, item.grade, item.customerName);
+        const rec = findTopHLocations(loc, item.grade, item.customerName, moveCount);
         suggestions.push({
           boxNo: item.boxNo,
           currentLoc: loc,
@@ -1409,7 +1525,9 @@ export default function App() {
           dominantPower: locationDominantAttrs[loc]?.dominantPower || '-',
           mismatchType: 'Non-A Grade Storage',
           recommendedLoc: rec.recommendedLoc,
-          recommendationReason: rec.recommendationReason
+          recommendationReason: rec.recommendationReason,
+          targetRecommendations: rec.targetRecommendations,
+          moveCount: rec.moveCount
         });
       }
     });
@@ -1838,11 +1956,16 @@ export default function App() {
       { header: 'Power (功率档)', key: 'powerGrade', width: 15 },
       { header: 'Dominant Cust (主存客户)', key: 'dominantCustomer', width: 24 },
       { header: 'Dominant Power (主存功率)', key: 'dominantPower', width: 16 },
-      { header: 'Target Loc (推荐库位)', key: 'recommendedLoc', width: 18 },
-      { header: 'Reason (调整说明)', key: 'recommendationReason', width: 68 }
+      { header: 'Target Loc (推荐库位)', key: 'recommendedLoc', width: 32 },
+      { header: 'Reason (调整说明)', key: 'recommendationReason', width: 85 },
+      { header: 'Alt Target 2 (备选2)', key: 'target2', width: 18 },
+      { header: 'Alt Target 3 (备选3)', key: 'target3', width: 18 }
     ];
 
     relocationSuggestions.forEach((s, i) => {
+      const t2 = s.targetRecommendations?.[1]?.loc || '-';
+      const t3 = s.targetRecommendations?.[2]?.loc || '-';
+
       const excelRow = worksheet.addRow({
         index: i + 1,
         boxNo: s.boxNo,
@@ -1853,7 +1976,9 @@ export default function App() {
         dominantCustomer: s.dominantCustomer,
         dominantPower: s.dominantPower,
         recommendedLoc: s.recommendedLoc,
-        recommendationReason: s.recommendationReason
+        recommendationReason: s.recommendationReason,
+        target2: t2,
+        target3: t3
       });
 
       excelRow.eachCell((cell, colNumber) => {
@@ -1861,10 +1986,16 @@ export default function App() {
           cell.font = { name: 'Arial', color: { argb: 'FFEF4444' }, bold: true, size: 9 };
         } else if (colNumber === 9) {
           cell.font = { name: 'Arial', color: { argb: 'FF10B981' }, bold: true, size: 9 };
+        } else if (colNumber === 11 || colNumber === 12) {
+          cell.font = { name: 'Arial', color: { argb: 'FF475569' }, bold: true, size: 9 };
         } else {
           cell.font = { name: 'Arial', color: { argb: 'FF1E293B' }, size: 9 };
         }
-        cell.alignment = { vertical: 'middle', horizontal: (colNumber === 1 || colNumber === 3 || colNumber === 9) ? 'center' : 'left' };
+        cell.alignment = { 
+          vertical: 'middle', 
+          horizontal: (colNumber === 1 || colNumber === 3 || colNumber === 9 || colNumber === 11 || colNumber === 12) ? 'center' : 'left',
+          wrapText: colNumber === 10
+        };
       });
     });
 
@@ -3504,15 +3635,44 @@ export default function App() {
                                   </span>
                                 </td>
                                 <td className="px-5 py-3 pr-8">
-                                  <div className="flex flex-col">
-                                    <span className={cn(
-                                      "font-bold font-mono flex items-center gap-1",
-                                      row.recommendedLoc === 'No Match' || row.recommendedLoc.includes('No') ? "text-slate-400" : "text-emerald-600"
-                                    )}>
-                                      <ArrowRight className="w-3 h-3" />
-                                      {row.recommendedLoc}
-                                    </span>
-                                    <span className="text-[9px] text-slate-500 max-w-md leading-relaxed">
+                                  <div className="flex flex-col gap-1.5">
+                                    {row.targetRecommendations && row.targetRecommendations.length > 0 ? (
+                                      <div className="flex flex-wrap items-center gap-1.5">
+                                        {row.targetRecommendations.map((target, tIdx) => (
+                                          <div 
+                                            key={tIdx}
+                                            className={cn(
+                                              "inline-flex items-center gap-1 px-2 py-0.5 rounded-lg text-xs font-mono font-bold border transition-all shadow-2xs",
+                                              tIdx === 0 
+                                                ? (target.isExactMatch 
+                                                    ? "bg-emerald-50 text-emerald-800 border-emerald-300 ring-1 ring-emerald-400/40" 
+                                                    : "bg-blue-50 text-blue-800 border-blue-200")
+                                                : "bg-slate-50 text-slate-700 border-slate-200"
+                                            )}
+                                          >
+                                            <span className="text-[9px] px-1 py-0.2 rounded bg-black/5 text-slate-500">#{tIdx + 1}</span>
+                                            <span className="tracking-tight">{target.loc}</span>
+                                            {target.isExactMatch && (
+                                              <span className="text-[8px] uppercase tracking-wider px-1 py-0.2 rounded bg-emerald-600 text-white font-sans font-extrabold">
+                                                {target.capacity === 14 ? 'Exact 14' : 'Exact 18'}
+                                              </span>
+                                            )}
+                                            <span className="text-[9px] text-slate-400 font-sans font-normal">
+                                              ({target.currentCount}+{row.moveCount || 1}={target.postMoveCount})
+                                            </span>
+                                          </div>
+                                        ))}
+                                      </div>
+                                    ) : (
+                                      <span className={cn(
+                                        "font-bold font-mono flex items-center gap-1 text-xs",
+                                        row.recommendedLoc === 'No Match' || row.recommendedLoc.includes('No') ? "text-slate-400" : "text-emerald-600"
+                                      )}>
+                                        <ArrowRight className="w-3 h-3" />
+                                        {row.recommendedLoc}
+                                      </span>
+                                    )}
+                                    <span className="text-[9px] text-slate-500 max-w-xl leading-relaxed whitespace-pre-line font-sans">
                                       {row.recommendationReason}
                                     </span>
                                   </div>
