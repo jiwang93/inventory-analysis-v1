@@ -319,25 +319,36 @@ export default function App() {
   const [cloudMappings, setCloudMappings] = useState<Array<{ id: string; mappingFileName: string; count: number; updatedAt: string; orderCustomerMap: Record<string, string> }>>([]);
   const [isCloudSaving, setIsCloudSaving] = useState(false);
   const [isCloudLoading, setIsCloudLoading] = useState(false);
+  const [cloudError, setCloudError] = useState<string | null>(null);
   const [lastSyncedCloudTime, setLastSyncedCloudTime] = useState<string | null>(null);
   const [isCloudSynced, setIsCloudSynced] = useState(false);
 
   // 获取云端全部关系对照模板
   const fetchCloudMappings = useCallback(async (autoLoadIfEmpty = false) => {
     setIsCloudLoading(true);
+    setCloudError(null);
     try {
-      const q = query(collection(db, 'mappings'), orderBy('updatedAt', 'desc'), limit(15));
-      const querySnapshot = await getDocs(q);
-      const mappingsList: any[] = [];
-      querySnapshot.forEach((doc) => {
-        const itemData = doc.data();
-        if (doc.id !== 'latest') { 
-          mappingsList.push({
-            id: doc.id,
-            ...itemData
-          });
-        }
-      });
+      const fetchPromise = async () => {
+        const q = query(collection(db, 'mappings'), orderBy('updatedAt', 'desc'), limit(15));
+        const querySnapshot = await getDocs(q);
+        const mappingsList: any[] = [];
+        querySnapshot.forEach((doc) => {
+          const itemData = doc.data();
+          if (doc.id !== 'latest') { 
+            mappingsList.push({
+              id: doc.id,
+              ...itemData
+            });
+          }
+        });
+        return mappingsList;
+      };
+
+      const timeoutPromise = new Promise<any[]>((_, reject) =>
+        setTimeout(() => reject(new Error('云端连接响应超时，已切换至本地模式')), 10000)
+      );
+
+      const mappingsList = await Promise.race([fetchPromise(), timeoutPromise]);
       setCloudMappings(mappingsList);
 
       // 若当前本地没有对照表，尝试从云端拉取最新的自动加载
@@ -376,6 +387,7 @@ export default function App() {
       }
     } catch (err: any) {
       console.error('Failed to fetch cloud mappings:', err);
+      // Non-fatal for initial load
     } finally {
       setIsCloudLoading(false);
     }
@@ -394,6 +406,7 @@ export default function App() {
       return;
     }
     setIsCloudSaving(true);
+    setCloudError(null);
     try {
       const dataPayload = {
         mappingFileName,
@@ -401,14 +414,23 @@ export default function App() {
         updatedAt: new Date().toISOString(),
         count: Object.keys(orderCustomerMap).length,
       };
-      
-      // 1. 存入历史集合
-      const docRef = await addDoc(collection(db, 'mappings'), dataPayload);
-      
-      // 2. 同时在 latest 文档上覆盖记录
-      await setDoc(doc(db, 'mappings', 'latest'), dataPayload);
+
+      const syncTask = async () => {
+        // 1. 存入历史集合
+        const docRef = await addDoc(collection(db, 'mappings'), dataPayload);
+        // 2. 同时在 latest 文档上覆盖记录
+        await setDoc(doc(db, 'mappings', 'latest'), dataPayload);
+        return docRef;
+      };
+
+      const timeoutPromise = new Promise<{ id: string }>((_, reject) =>
+        setTimeout(() => reject(new Error('云端请求超时 (12秒)，请检查网络后重试')), 12000)
+      );
+
+      const docRef = await Promise.race([syncTask(), timeoutPromise]);
 
       setIsCloudSynced(true);
+      setCloudError(null);
       setLastSyncedCloudTime(new Date().toLocaleTimeString());
       setSaveSuccess(`云端发布成功！共享 ID: ${docRef.id}，其它客户端刷新即可自动拉取最新。`);
       setTimeout(() => setSaveSuccess(null), 5000);
@@ -416,8 +438,10 @@ export default function App() {
       // 刷新列表
       await fetchCloudMappings(false);
     } catch (err: any) {
-      console.error(err);
-      setError('云端数据库同步失败：' + (err.message || String(err)));
+      console.error('Cloud save failed:', err);
+      const errMsg = err?.message || String(err);
+      setCloudError(errMsg);
+      setError('云端数据库同步失败：' + errMsg);
     } finally {
       setIsCloudSaving(false);
     }
@@ -1195,41 +1219,41 @@ export default function App() {
           // 正好拼成 18 箱（满托满位，最顶级匹配）
           if (matchCust && matchPower) {
             priority = 1;
-            matchDesc = `EXACT 18 MATCH: ${cnt}+${effectiveMoveCount}=18 boxes (Client & Power Match)`;
-          } else if (matchCust) {
-            priority = 2;
-            matchDesc = `EXACT 18 MATCH: ${cnt}+${effectiveMoveCount}=18 boxes (Client Match)`;
+            matchDesc = `同客户同功率 ${cnt}箱 (调入后满18箱)`;
           } else if (matchPower) {
+            priority = 2;
+            matchDesc = `同功率 ${cnt}箱 (调入后满18箱)`;
+          } else if (matchCust) {
             priority = 3;
-            matchDesc = `EXACT 18 MATCH: ${cnt}+${effectiveMoveCount}=18 boxes (Power Match)`;
+            matchDesc = `同客户 ${cnt}箱 (调入后满18箱)`;
           } else {
             priority = 4;
-            matchDesc = `EXACT 18 MATCH: ${cnt}+${effectiveMoveCount}=18 boxes (Consolidates to 18)`;
+            matchDesc = `已有 ${cnt}箱 (调入后满18箱)`;
           }
         } else if (!isEmpty) {
           // 未达正好18箱但已有在库货物（合并存量，避免单箱占用新库位，越接近18越优先）
           if (matchCust && matchPower) {
             priority = 10;
-            matchDesc = `Matches Client & Power (${cnt}+${effectiveMoveCount}=${postMoveCount}/18 boxes)`;
-          } else if (matchCust) {
-            priority = 20;
-            matchDesc = `Matches Client (${cnt}+${effectiveMoveCount}=${postMoveCount}/18 boxes)`;
+            matchDesc = `同客户同功率 ${cnt}箱 (调入后${postMoveCount}/18箱)`;
           } else if (matchPower) {
+            priority = 20;
+            matchDesc = `同功率 ${cnt}箱 (调入后${postMoveCount}/18箱)`;
+          } else if (matchCust) {
             priority = 30;
-            matchDesc = `Matches Power (${cnt}+${effectiveMoveCount}=${postMoveCount}/18 boxes)`;
+            matchDesc = `同客户 ${cnt}箱 (调入后${postMoveCount}/18箱)`;
           } else {
             priority = 40;
-            matchDesc = `Consolidates (${cnt}+${effectiveMoveCount}=${postMoveCount}/18 boxes)`;
+            matchDesc = `已有 ${cnt}箱 (调入后${postMoveCount}/18箱)`;
           }
         } else {
           // 全新空置库位 (cnt === 0)
           if (isExactMatch) {
             priority = 5;
-            matchDesc = `EXACT 18: Full Fresh Rack (${effectiveMoveCount}/18 boxes)`;
+            matchDesc = `空库位 (直接占满18箱)`;
           } else {
             // 普通箱数放入空库位，作为保底方案（避免单箱孤独占用一整库位）
             priority = 50;
-            matchDesc = `Empty Rack (${cnt}+${effectiveMoveCount}=${postMoveCount}/18 boxes)`;
+            matchDesc = `空库位 (调入后${postMoveCount}/18箱)`;
           }
         }
 
@@ -1263,8 +1287,8 @@ export default function App() {
 
       if (topCandidates.length === 0) {
         return {
-          recommendedLoc: 'No Match',
-          recommendationReason: 'No regular rack location with capacity available (aisles/packaging excluded)',
+          recommendedLoc: '无可用库位 (No Match)',
+          recommendationReason: '常规库位已满或容量不足（已排除通道与包装区）',
           targetRecommendations: [],
           moveCount: effectiveMoveCount
         };
@@ -1280,8 +1304,12 @@ export default function App() {
         matchTypeDesc: c.matchDesc
       }));
 
-      const recommendedLocStr = targetRecs.map((t, idx) => `#${idx + 1} ${t.loc}${t.isExactMatch ? ' [Exact 18]' : ''}`).join(' | ');
-      const reasonStr = targetRecs.map((t, idx) => `${idx + 1}. ${t.loc}: ${t.matchTypeDesc}`).join('; ');
+      const recommendedLocStr = targetRecs.length === 1
+        ? targetRecs[0].loc
+        : targetRecs.map((t, idx) => `#${idx + 1} ${t.loc}`).join(' | ');
+      const reasonStr = targetRecs.length === 1
+        ? `${targetRecs[0].loc}: ${targetRecs[0].matchTypeDesc}`
+        : targetRecs.map((t, idx) => `${idx + 1}. ${t.loc}: ${t.matchTypeDesc}`).join('; ');
 
       return {
         recommendedLoc: recommendedLocStr,
@@ -1328,38 +1356,38 @@ export default function App() {
         if (isExactMatch && !isEmpty) {
           if (hasSameGrade && hasSameCust) {
             priority = 1;
-            matchDesc = `EXACT 14 MATCH: ${cnt}+${effectiveMoveCount}=14 boxes (Grade ${grade} & Client Match)`;
+            matchDesc = `同客户/同等级${grade} ${cnt}箱 (调入后满14箱)`;
           } else if (hasSameGrade) {
             priority = 2;
-            matchDesc = `EXACT 14 MATCH: ${cnt}+${effectiveMoveCount}=14 boxes (Grade ${grade} Consolidates to 14)`;
+            matchDesc = `同等级${grade} ${cnt}箱 (调入后满14箱)`;
           } else if (hasSameCust) {
             priority = 3;
-            matchDesc = `EXACT 14 MATCH: ${cnt}+${effectiveMoveCount}=14 boxes (Client Match)`;
+            matchDesc = `同客户 ${cnt}箱 (调入后满14箱)`;
           } else {
             priority = 4;
-            matchDesc = `EXACT 14 MATCH: ${cnt}+${effectiveMoveCount}=14 boxes (Fills H-Rack)`;
+            matchDesc = `已有 ${cnt}箱 (调入后满14箱)`;
           }
         } else if (!isEmpty) {
           if (hasSameGrade && hasSameCust) {
             priority = 10;
-            matchDesc = `Grade ${grade} & Client Match (${cnt}+${effectiveMoveCount}=${postMoveCount}/14 boxes)`;
+            matchDesc = `同客户/同等级${grade} ${cnt}箱 (调入后${postMoveCount}/14箱)`;
           } else if (hasSameGrade) {
             priority = 20;
-            matchDesc = `Consolidates Grade ${grade} (${cnt}+${effectiveMoveCount}=${postMoveCount}/14 boxes)`;
+            matchDesc = `同等级${grade} ${cnt}箱 (调入后${postMoveCount}/14箱)`;
           } else if (hasSameCust) {
             priority = 30;
-            matchDesc = `Matches Client (${cnt}+${effectiveMoveCount}=${postMoveCount}/14 boxes)`;
+            matchDesc = `同客户 ${cnt}箱 (调入后${postMoveCount}/14箱)`;
           } else {
             priority = 40;
-            matchDesc = `Consolidates Non-A (${cnt}+${effectiveMoveCount}=${postMoveCount}/14 boxes)`;
+            matchDesc = `已有 ${cnt}箱 (调入后${postMoveCount}/14箱)`;
           }
         } else {
           if (isExactMatch) {
             priority = 5;
-            matchDesc = `EXACT 14: Full Fresh H-Rack (${effectiveMoveCount}/14 boxes)`;
+            matchDesc = `空H库位 (直接占满14箱)`;
           } else {
             priority = 50;
-            matchDesc = `Empty H-Rack (${cnt}+${effectiveMoveCount}=${postMoveCount}/14 boxes)`;
+            matchDesc = `空H库位 (调入后${postMoveCount}/14箱)`;
           }
         }
 
@@ -1389,8 +1417,8 @@ export default function App() {
 
       if (topCandidates.length === 0) {
         return {
-          recommendedLoc: 'No H-Loc Avail',
-          recommendationReason: 'H-zone capacity full (14 boxes/loc, aisles/packaging excluded)',
+          recommendedLoc: '无可用H库位 (No H-Loc)',
+          recommendationReason: 'H库位已满或容量不足（已排除通道与包装区）',
           targetRecommendations: [],
           moveCount: effectiveMoveCount
         };
@@ -1406,8 +1434,12 @@ export default function App() {
         matchTypeDesc: c.matchDesc
       }));
 
-      const recommendedLocStr = targetRecs.map((t, idx) => `#${idx + 1} ${t.loc}${t.isExactMatch ? ' [Exact 14]' : ''}`).join(' | ');
-      const reasonStr = targetRecs.map((t, idx) => `${idx + 1}. ${t.loc}: ${t.matchTypeDesc}`).join('; ');
+      const recommendedLocStr = targetRecs.length === 1
+        ? targetRecs[0].loc
+        : targetRecs.map((t, idx) => `#${idx + 1} ${t.loc}`).join(' | ');
+      const reasonStr = targetRecs.length === 1
+        ? `${targetRecs[0].loc}: ${targetRecs[0].matchTypeDesc}`
+        : targetRecs.map((t, idx) => `${idx + 1}. ${t.loc}: ${t.matchTypeDesc}`).join('; ');
 
       return {
         recommendedLoc: recommendedLocStr,
@@ -1956,8 +1988,8 @@ export default function App() {
       { header: 'Power (功率档)', key: 'powerGrade', width: 15 },
       { header: 'Dominant Cust (主存客户)', key: 'dominantCustomer', width: 24 },
       { header: 'Dominant Power (主存功率)', key: 'dominantPower', width: 16 },
-      { header: 'Target Loc (推荐库位)', key: 'recommendedLoc', width: 32 },
-      { header: 'Reason (调整说明)', key: 'recommendationReason', width: 85 },
+      { header: 'Target Loc (推荐库位)', key: 'recommendedLoc', width: 28 },
+      { header: 'Reason (同客户功率箱数说明)', key: 'recommendationReason', width: 68 },
       { header: 'Alt Target 2 (备选2)', key: 'target2', width: 18 },
       { header: 'Alt Target 3 (备选3)', key: 'target3', width: 18 }
     ];
@@ -2939,6 +2971,17 @@ export default function App() {
                         )}
                         {isCloudSaving ? 'Publishing to Cloud...' : isCloudSynced ? 'Synced to Cloud (云端已同步)' : 'Sync to Cloud (发布至云端共享)'}
                       </button>
+                      {cloudError && (
+                        <div className="text-[10px] text-rose-200 bg-rose-950/80 p-2 rounded-xl border border-rose-800 flex items-center justify-between gap-1 z-10">
+                          <span className="truncate" title={cloudError}>{cloudError}</span>
+                          <button
+                            onClick={saveMappingToCloud}
+                            className="shrink-0 underline text-rose-300 hover:text-white font-bold ml-1"
+                          >
+                            重试
+                          </button>
+                        </div>
+                      )}
                       {lastSyncedCloudTime && (
                         <p className="text-[8px] text-violet-300 text-center font-mono">
                           Last Synced: {lastSyncedCloudTime}
@@ -3653,8 +3696,8 @@ export default function App() {
                                             <span className="text-[9px] px-1 py-0.2 rounded bg-black/5 text-slate-500">#{tIdx + 1}</span>
                                             <span className="tracking-tight">{target.loc}</span>
                                             {target.isExactMatch && (
-                                              <span className="text-[8px] uppercase tracking-wider px-1 py-0.2 rounded bg-emerald-600 text-white font-sans font-extrabold">
-                                                {target.capacity === 14 ? 'Exact 14' : 'Exact 18'}
+                                              <span className="text-[8px] uppercase tracking-wider px-1.5 py-0.5 rounded bg-emerald-600 text-white font-sans font-bold shadow-2xs">
+                                                {target.capacity === 14 ? '满14箱' : '满18箱'}
                                               </span>
                                             )}
                                             <span className="text-[9px] text-slate-400 font-sans font-normal">
@@ -3666,13 +3709,13 @@ export default function App() {
                                     ) : (
                                       <span className={cn(
                                         "font-bold font-mono flex items-center gap-1 text-xs",
-                                        row.recommendedLoc === 'No Match' || row.recommendedLoc.includes('No') ? "text-slate-400" : "text-emerald-600"
+                                        row.recommendedLoc === '无可用库位 (No Match)' || row.recommendedLoc.includes('无') || row.recommendedLoc.includes('No') ? "text-slate-400" : "text-emerald-600"
                                       )}>
                                         <ArrowRight className="w-3 h-3" />
                                         {row.recommendedLoc}
                                       </span>
                                     )}
-                                    <span className="text-[9px] text-slate-500 max-w-xl leading-relaxed whitespace-pre-line font-sans">
+                                    <span className="text-[10px] text-slate-600 max-w-xl leading-relaxed whitespace-pre-line font-sans font-medium">
                                       {row.recommendationReason}
                                     </span>
                                   </div>
