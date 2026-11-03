@@ -1306,8 +1306,8 @@ export default function App() {
 
       if (topCandidates.length === 0) {
         return {
-          recommendedLoc: '无可用库位 (No Match)',
-          recommendationReason: '常规库位已满或容量不足（已排除通道与包装区）',
+          recommendedLoc: 'No Match',
+          recommendationReason: 'Regular locations full or insufficient capacity',
           targetRecommendations: [],
           moveCount: effectiveMoveCount
         };
@@ -1323,9 +1323,10 @@ export default function App() {
         matchTypeDesc: c.matchDesc
       }));
 
+      const formatLocWithBoxes = (loc: string, cnt: number) => `${loc} (${cnt} ${cnt === 1 ? 'box' : 'boxes'})`;
       const recommendedLocStr = targetRecs.length === 1
-        ? targetRecs[0].loc
-        : targetRecs.map((t, idx) => `#${idx + 1} ${t.loc}`).join(' | ');
+        ? formatLocWithBoxes(targetRecs[0].loc, targetRecs[0].currentCount)
+        : targetRecs.map((t, idx) => `#${idx + 1} ${formatLocWithBoxes(t.loc, t.currentCount)}`).join(' | ');
       const reasonStr = targetRecs.length === 1
         ? `${targetRecs[0].loc}: ${targetRecs[0].matchTypeDesc}`
         : targetRecs.map((t, idx) => `${idx + 1}. ${t.loc}: ${t.matchTypeDesc}`).join('; ');
@@ -1436,8 +1437,8 @@ export default function App() {
 
       if (topCandidates.length === 0) {
         return {
-          recommendedLoc: '无可用H库位 (No H-Loc)',
-          recommendationReason: 'H库位已满或容量不足（已排除通道与包装区）',
+          recommendedLoc: 'No H-Loc Available',
+          recommendationReason: 'H-rack locations full or insufficient capacity',
           targetRecommendations: [],
           moveCount: effectiveMoveCount
         };
@@ -1453,9 +1454,10 @@ export default function App() {
         matchTypeDesc: c.matchDesc
       }));
 
+      const formatHLocWithBoxes = (loc: string, cnt: number) => `${loc} (${cnt} ${cnt === 1 ? 'box' : 'boxes'})`;
       const recommendedLocStr = targetRecs.length === 1
-        ? targetRecs[0].loc
-        : targetRecs.map((t, idx) => `#${idx + 1} ${t.loc}`).join(' | ');
+        ? formatHLocWithBoxes(targetRecs[0].loc, targetRecs[0].currentCount)
+        : targetRecs.map((t, idx) => `#${idx + 1} ${formatHLocWithBoxes(t.loc, t.currentCount)}`).join(' | ');
       const reasonStr = targetRecs.length === 1
         ? `${targetRecs[0].loc}: ${targetRecs[0].matchTypeDesc}`
         : targetRecs.map((t, idx) => `${idx + 1}. ${t.loc}: ${t.matchTypeDesc}`).join('; ');
@@ -1662,16 +1664,16 @@ export default function App() {
   const downloadMappingTemplate = async () => {
     try {
       const workbook = new ExcelJS.Workbook();
-      const worksheet = workbook.addWorksheet('Mapping Template (对照表)');
+      const worksheet = workbook.addWorksheet('Mapping Template');
 
       // Add columns
       worksheet.columns = [
-        { header: 'No. (序号)', key: 'seq', width: 12 },
-        { header: 'Order / Sales No. (工单/销售单号-Col B)', key: 'orderNo', width: 32 },
-        { header: 'Extra Col 1 (辅助列1)', key: 'remark1', width: 20 },
-        { header: 'Extra Col 2 (辅助列2)', key: 'remark2', width: 20 },
-        { header: 'Extra Col 3 (辅助列3)', key: 'remark3', width: 20 },
-        { header: 'Customer Name (客户名称-Col F)', key: 'customerName', width: 30 },
+        { header: 'No.', key: 'seq', width: 10 },
+        { header: 'Order / Sales No. (Col B)', key: 'orderNo', width: 30 },
+        { header: 'Extra Col 1', key: 'remark1', width: 16 },
+        { header: 'Extra Col 2', key: 'remark2', width: 16 },
+        { header: 'Extra Col 3', key: 'remark3', width: 16 },
+        { header: 'Customer Name (Col F)', key: 'customerName', width: 28 },
       ];
 
       worksheet.views = [{ showGridLines: true }];
@@ -1729,7 +1731,7 @@ export default function App() {
             };
           }
           cell.border = {
-            top: { style: 'thin', color: { argb: 'F1F5F9' } },
+              top: { style: 'thin', color: { argb: 'F1F5F9' } },
             left: { style: 'thin', color: { argb: 'F1F5F9' } },
             bottom: { style: 'thin', color: { argb: 'F1F5F9' } },
             right: { style: 'thin', color: { argb: 'F1F5F9' } }
@@ -1738,13 +1740,13 @@ export default function App() {
       });
 
       worksheet.addRow([]);
-      const rHeader = worksheet.addRow(['Notes / 规范说明:']);
+      const rHeader = worksheet.addRow(['Notes:']);
       rHeader.getCell(1).font = { name: 'Arial', size: 10, bold: true, color: { argb: '7C3AED' } };
 
       const notes = [
-        '1. Column B: Order No. / Sales No. (工单/销售单号)',
-        '2. Column F: Customer Name (客户简称/名称)',
-        '3. Other columns (A, C, D, E) are optional and ignored (其余列可选，不影响匹配)'
+        '1. Column B: Order No. / Sales No.',
+        '2. Column F: Customer Name',
+        '3. Other columns (A, C, D, E) are optional and ignored'
       ];
 
       notes.forEach(note => {
@@ -1781,17 +1783,17 @@ export default function App() {
     const uniqueCustomers = Array.from(uniqueCustomersSet).sort();
 
     const workbook = new ExcelJS.Workbook();
-    const worksheet = workbook.addWorksheet('Location Summary (库位统计)');
+    const worksheet = workbook.addWorksheet('Location Summary');
 
     const baseColumns = [
-      { header: 'Location (库位)', key: 'location', width: 18 },
-      { header: 'Dominant Cust & Power (主存客户/功率)', key: 'dominantAttr', width: 34 },
-      { header: 'Box Qty (箱数)', key: 'count', width: 14 },
-      { header: 'Avail Cap (可入容量)', key: 'available', width: 18 },
+      { header: 'Location', key: 'location', width: 16 },
+      { header: 'Dominant Customer & Power', key: 'dominantAttr', width: 32 },
+      { header: 'Box Count', key: 'count', width: 14 },
+      { header: 'Available Capacity', key: 'available', width: 18 },
     ];
 
     const customerColumns = uniqueCustomers.map(cust => ({
-      header: `${cust} (Qty)`,
+      header: cust === '未映射客户' ? 'Unmapped Customer (Qty)' : `${cust} (Qty)`,
       key: `cust_${cust}`,
       width: Math.max(14, cust.length * 2 + 4)
     }));
@@ -1799,9 +1801,10 @@ export default function App() {
     worksheet.columns = [...baseColumns, ...customerColumns];
 
     results.forEach((row) => {
+      const dominantCust = row['主存客户'] === '未映射客户' ? 'Unmapped Customer' : row['主存客户'];
       const rowData: Record<string, any> = {
         location: row['库位名称'],
-        dominantAttr: row['主存客户'] !== '空置' ? `${row['主存客户']} (${row['主存功率']})` : 'Empty (空置)',
+        dominantAttr: row['主存客户'] !== '空置' ? `${dominantCust} (${row['主存功率'] || '-'})` : 'Empty',
         count: row['箱号数量'],
         available: row['可入库数量'],
       };
@@ -1852,14 +1855,14 @@ export default function App() {
     if (mixedPowerAlerts.length === 0) return;
 
     const workbook = new ExcelJS.Workbook();
-    const worksheet = workbook.addWorksheet('Mixed Power Alerts (混档异常)');
+    const worksheet = workbook.addWorksheet('Mixed Power Alerts');
 
     worksheet.columns = [
-      { header: 'Location (库位)', key: 'location', width: 16 },
-      { header: 'Total Boxes (总箱数)', key: 'totalCount', width: 18 },
-      { header: 'Power Class (功率档)', key: 'power', width: 18 },
-      { header: 'Box Qty (箱数)', key: 'powerCount', width: 16 },
-      { header: 'Box Numbers (箱号明细)', key: 'boxes', width: 75 }
+      { header: 'Location', key: 'location', width: 16 },
+      { header: 'Total Boxes', key: 'totalCount', width: 16 },
+      { header: 'Power Grade', key: 'power', width: 16 },
+      { header: 'Box Qty', key: 'powerCount', width: 14 },
+      { header: 'Box Numbers', key: 'boxes', width: 75 }
     ];
 
     mixedPowerAlerts.forEach((alert) => {
@@ -1904,24 +1907,25 @@ export default function App() {
     if (mixedCustomerAlerts.length === 0) return;
 
     const workbook = new ExcelJS.Workbook();
-    const worksheet = workbook.addWorksheet('Mixed Customer (客户混载)');
+    const worksheet = workbook.addWorksheet('Mixed Customer Alerts');
 
     worksheet.columns = [
-      { header: 'Location (库位)', key: 'location', width: 16 },
-      { header: 'Total Boxes (总箱数)', key: 'totalCount', width: 18 },
-      { header: 'Customer (客户名称)', key: 'customer', width: 28 },
-      { header: 'Box Qty (箱数)', key: 'customerCount', width: 16 },
-      { header: 'Box Numbers (箱号明细)', key: 'boxes', width: 75 }
+      { header: 'Location', key: 'location', width: 16 },
+      { header: 'Total Boxes', key: 'totalCount', width: 16 },
+      { header: 'Customer', key: 'customer', width: 28 },
+      { header: 'Box Qty', key: 'customerCount', width: 14 },
+      { header: 'Box Numbers', key: 'boxes', width: 75 }
     ];
 
     mixedCustomerAlerts.forEach((alert) => {
       const totalBoxesInLoc = Object.values(alert.customerDetails).reduce((acc: number, bList) => acc + (bList as any[]).length, 0);
       Object.entries(alert.customerDetails).forEach(([customer, boxes]) => {
         const boxesTyped = boxes as { boxNo: string; power: string }[];
+        const custName = customer === '未映射客户' ? 'Unmapped Customer' : customer;
         const excelRow = worksheet.addRow({
           location: alert.location,
           totalCount: totalBoxesInLoc,
-          customer: customer,
+          customer: custName,
           customerCount: boxesTyped.length,
           boxes: boxesTyped.map(b => `${b.boxNo} (${b.power})`).join(', ')
         });
@@ -1956,18 +1960,19 @@ export default function App() {
     if (customerStats.length === 0) return;
 
     const workbook = new ExcelJS.Workbook();
-    const worksheet = workbook.addWorksheet('Customer Stats (客户统计)');
+    const worksheet = workbook.addWorksheet('Customer Stats');
 
     worksheet.columns = [
-      { header: 'No. (序号)', key: 'index', width: 12 },
-      { header: 'Customer (客户名称)', key: 'customerName', width: 38 },
-      { header: 'Box Qty (箱数)', key: 'boxCount', width: 20 }
+      { header: 'No.', key: 'index', width: 8 },
+      { header: 'Customer Name', key: 'customerName', width: 36 },
+      { header: 'Box Qty', key: 'boxCount', width: 16 }
     ];
 
     customerStats.forEach((stat, i) => {
+      const custName = stat.customerName === '未映射客户' ? 'Unmapped Customer' : stat.customerName;
       const excelRow = worksheet.addRow({
         index: i + 1,
-        customerName: stat.customerName,
+        customerName: custName,
         boxCount: stat.boxCount
       });
 
@@ -1996,40 +2001,43 @@ export default function App() {
     if (relocationSuggestions.length === 0) return;
 
     const workbook = new ExcelJS.Workbook();
-    const worksheet = workbook.addWorksheet('Relocation Plan (纠偏建议)');
+    const worksheet = workbook.addWorksheet('Relocation Plan');
 
     worksheet.columns = [
-      { header: 'No. (序号)', key: 'index', width: 10 },
-      { header: 'Box No. (箱号)', key: 'boxNo', width: 22 },
-      { header: 'Current Loc (当前库位)', key: 'currentLoc', width: 18 },
-      { header: 'Mismatch (偏差类型)', key: 'mismatchType', width: 26 },
-      { header: 'Customer (客户)', key: 'customerName', width: 24 },
-      { header: 'Power (功率档)', key: 'powerGrade', width: 15 },
-      { header: 'Dominant Cust (主存客户)', key: 'dominantCustomer', width: 24 },
-      { header: 'Dominant Power (主存功率)', key: 'dominantPower', width: 16 },
-      { header: 'Target Loc (推荐库位)', key: 'recommendedLoc', width: 28 },
-      { header: 'Reason (同客户功率箱数说明)', key: 'recommendationReason', width: 68 },
-      { header: 'Alt Target 2 (备选2)', key: 'target2', width: 18 },
-      { header: 'Alt Target 3 (备选3)', key: 'target3', width: 18 }
+      { header: 'No.', key: 'index', width: 8 },
+      { header: 'Box No.', key: 'boxNo', width: 22 },
+      { header: 'Current Loc', key: 'currentLoc', width: 16 },
+      { header: 'Mismatch Type', key: 'mismatchType', width: 26 },
+      { header: 'Customer', key: 'customerName', width: 24 },
+      { header: 'Power Grade', key: 'powerGrade', width: 16 },
+      { header: 'Dominant Customer', key: 'dominantCustomer', width: 24 },
+      { header: 'Dominant Power', key: 'dominantPower', width: 16 },
+      { header: 'Target Loc', key: 'recommendedLoc', width: 38 }
     ];
 
     relocationSuggestions.forEach((s, i) => {
-      const t2 = s.targetRecommendations?.[1]?.loc || '-';
-      const t3 = s.targetRecommendations?.[2]?.loc || '-';
+      const custDisplay = (s.customerName === '未映射客户' || !s.customerName) ? 'Unmapped Customer' : s.customerName;
+      const domCustDisplay = (s.dominantCustomer === '未映射客户') ? 'Unmapped Customer' : (s.dominantCustomer || '-');
+      const powerDisplay = (s.powerGrade === '未知' || !s.powerGrade) ? 'Unknown' : s.powerGrade;
+      const domPowerDisplay = (s.dominantPower === '未知') ? 'Unknown' : (s.dominantPower || '-');
+
+      const targetLocClean = s.recommendedLoc
+        ? s.recommendedLoc
+            .replace(/(\d+)箱/g, '$1 boxes')
+            .replace('无可用库位 (No Match)', 'No Match')
+            .replace('无可用H库位 (No H-Loc)', 'No H-Loc')
+        : 'No Match';
 
       const excelRow = worksheet.addRow({
         index: i + 1,
         boxNo: s.boxNo,
         currentLoc: s.currentLoc,
         mismatchType: s.mismatchType,
-        customerName: s.customerName,
-        powerGrade: s.powerGrade,
-        dominantCustomer: s.dominantCustomer,
-        dominantPower: s.dominantPower,
-        recommendedLoc: s.recommendedLoc,
-        recommendationReason: s.recommendationReason,
-        target2: t2,
-        target3: t3
+        customerName: custDisplay,
+        powerGrade: powerDisplay,
+        dominantCustomer: domCustDisplay,
+        dominantPower: domPowerDisplay,
+        recommendedLoc: targetLocClean
       });
 
       excelRow.eachCell((cell, colNumber) => {
@@ -2037,15 +2045,12 @@ export default function App() {
           cell.font = { name: 'Arial', color: { argb: 'FFEF4444' }, bold: true, size: 9 };
         } else if (colNumber === 9) {
           cell.font = { name: 'Arial', color: { argb: 'FF10B981' }, bold: true, size: 9 };
-        } else if (colNumber === 11 || colNumber === 12) {
-          cell.font = { name: 'Arial', color: { argb: 'FF475569' }, bold: true, size: 9 };
         } else {
           cell.font = { name: 'Arial', color: { argb: 'FF1E293B' }, size: 9 };
         }
         cell.alignment = { 
           vertical: 'middle', 
-          horizontal: (colNumber === 1 || colNumber === 3 || colNumber === 9 || colNumber === 11 || colNumber === 12) ? 'center' : 'left',
-          wrapText: colNumber === 10
+          horizontal: (colNumber === 1 || colNumber === 3 || colNumber === 9) ? 'center' : 'left'
         };
       });
     });
@@ -2073,7 +2078,7 @@ export default function App() {
       const workbook = new ExcelJS.Workbook();
       
       // Sheet 1: Non-A Summary
-      const summarySheet = workbook.addWorksheet('Summary (汇总)');
+      const summarySheet = workbook.addWorksheet('Summary');
       
       const bItems = nonAGradeList.filter(x => x.grade === 'B');
       const fItems = nonAGradeList.filter(x => x.grade === 'F');
@@ -2107,7 +2112,7 @@ export default function App() {
       ];
 
       // Title
-      const titleRow = summarySheet.addRow(['Non-A Grade Inventory Summary (非A级品库存统计)']);
+      const titleRow = summarySheet.addRow(['Non-A Grade Inventory Summary']);
       titleRow.font = { name: 'Arial', size: 13, bold: true, color: { argb: 'FFFFFFFF' } };
       titleRow.height = 32;
       summarySheet.mergeCells('A1:E1');
@@ -2148,10 +2153,10 @@ export default function App() {
       summarySheet.addRow([]);
 
       // Section 1: By Grade
-      const sec1 = summarySheet.addRow(['1. Breakdown by Grade / 等级分类统计 (Col K)']);
+      const sec1 = summarySheet.addRow(['1. Breakdown by Grade (Col K)']);
       sec1.font = { name: 'Arial', size: 10, bold: true, color: { argb: 'FF6B21A8' } };
 
-      const hGrade = summarySheet.addRow(['Grade (等级)', 'Box Qty (箱数)', 'Share (占比)', 'Locs (库位数)', 'Notes (说明)']);
+      const hGrade = summarySheet.addRow(['Grade', 'Box Qty', 'Share', 'Locs', 'Notes']);
       hGrade.height = 24;
       hGrade.eachCell(cell => {
         cell.font = { name: 'Arial', size: 10, bold: true, color: { argb: 'FFFFFFFF' } };
@@ -2161,13 +2166,13 @@ export default function App() {
 
       const totalNonA = nonAGradeList.length || 1;
       const gradeRowsData = [
-        { name: 'Grade B (B级品)', count: bItems.length, locs: new Set(bItems.map(x => x.location)).size, note: 'B-Grade / Substandard' },
-        { name: 'Grade F (F级品)', count: fItems.length, locs: new Set(fItems.map(x => x.location)).size, note: 'F-Grade / Pending Rework' },
-        { name: 'Grade R (R级品)', count: rItems.length, locs: new Set(rItems.map(x => x.location)).size, note: 'R-Grade / Return & Repair' },
+        { name: 'Grade B', count: bItems.length, locs: new Set(bItems.map(x => x.location)).size, note: 'B-Grade / Substandard' },
+        { name: 'Grade F', count: fItems.length, locs: new Set(fItems.map(x => x.location)).size, note: 'F-Grade / Pending Rework' },
+        { name: 'Grade R', count: rItems.length, locs: new Set(rItems.map(x => x.location)).size, note: 'R-Grade / Return & Repair' },
       ];
       if (otherItems.length > 0) {
         gradeRowsData.push({
-          name: 'Other Non-A (其他)',
+          name: 'Other Non-A',
           count: otherItems.length,
           locs: new Set(otherItems.map(x => x.location)).size,
           note: Array.from(new Set(otherItems.map(x => x.grade))).join(' / ')
@@ -2190,7 +2195,7 @@ export default function App() {
         });
       });
 
-      const totalGradeRow = summarySheet.addRow(['Total Non-A (合计)', nonAGradeList.length, '100.0%', sortedLocs.length, '-']);
+      const totalGradeRow = summarySheet.addRow(['Total Non-A', nonAGradeList.length, '100.0%', sortedLocs.length, '-']);
       totalGradeRow.height = 22;
       totalGradeRow.eachCell(cell => {
         cell.font = { name: 'Arial', size: 10, bold: true, color: { argb: 'FF0F172A' } };
@@ -2201,10 +2206,10 @@ export default function App() {
       summarySheet.addRow([]);
 
       // Section 2: By Location
-      const sec2 = summarySheet.addRow(['2. Distribution by Location / 库位分布汇总']);
+      const sec2 = summarySheet.addRow(['2. Distribution by Location']);
       sec2.font = { name: 'Arial', size: 10, bold: true, color: { argb: 'FF6B21A8' } };
 
-      const hLoc = summarySheet.addRow(['Location (库位)', 'Grade B', 'Grade F', 'Grade R', 'Total (总数)', 'Customers (涉及客户)']);
+      const hLoc = summarySheet.addRow(['Location', 'Grade B', 'Grade F', 'Grade R', 'Total', 'Customers']);
       hLoc.height = 24;
       hLoc.eachCell(cell => {
         cell.font = { name: 'Arial', size: 10, bold: true, color: { argb: 'FFFFFFFF' } };
@@ -2214,7 +2219,7 @@ export default function App() {
 
       sortedLocs.forEach(loc => {
         const d = locMap[loc];
-        const custList = Array.from(d.customers).join(', ') || '-';
+        const custList = Array.from(d.customers).map(c => c === '未映射客户' ? 'Unmapped Customer' : c).join(', ') || '-';
         const r = summarySheet.addRow([
           loc,
           d.b,
@@ -2237,17 +2242,17 @@ export default function App() {
       });
 
       // Sheet 2: Detail List
-      const detailSheet = workbook.addWorksheet('Details (明细清单)');
+      const detailSheet = workbook.addWorksheet('Details');
       detailSheet.columns = [
-        { header: 'No. (序号)', key: 'seq', width: 8 },
-        { header: 'Box No. (箱号)', key: 'boxNo', width: 24 },
-        { header: 'Location (库位)', key: 'location', width: 14 },
-        { header: 'Raw Grade (原等级-Col K)', key: 'rawGrade', width: 20 },
-        { header: 'Category (归类)', key: 'grade', width: 14 },
-        { header: 'Barcode Qty (条码数-Col S)', key: 'barcodeCount', width: 20 },
-        { header: 'Order No. (工单号-Col J)', key: 'orderNo', width: 20 },
-        { header: 'Customer (客户名称)', key: 'customerName', width: 24 },
-        { header: 'Power (功率档)', key: 'power', width: 14 }
+        { header: 'No.', key: 'seq', width: 8 },
+        { header: 'Box No.', key: 'boxNo', width: 22 },
+        { header: 'Location', key: 'location', width: 14 },
+        { header: 'Raw Grade', key: 'rawGrade', width: 16 },
+        { header: 'Category', key: 'grade', width: 14 },
+        { header: 'Barcode Qty', key: 'barcodeCount', width: 16 },
+        { header: 'Order No.', key: 'orderNo', width: 20 },
+        { header: 'Customer', key: 'customerName', width: 24 },
+        { header: 'Power Grade', key: 'power', width: 14 }
       ];
 
       const hDetail = detailSheet.getRow(1);
@@ -2259,6 +2264,8 @@ export default function App() {
       });
 
       nonAGradeList.forEach((item, idx) => {
+        const custDisplay = item.customerName === '未映射客户' ? 'Unmapped Customer' : (item.customerName || '-');
+        const powerDisplay = item.power === '未知' ? 'Unknown' : (item.power || '-');
         const r = detailSheet.addRow({
           seq: idx + 1,
           boxNo: item.boxNo,
@@ -2267,8 +2274,8 @@ export default function App() {
           grade: `Grade ${item.grade}`,
           barcodeCount: item.barcodeCount !== undefined ? item.barcodeCount : '-',
           orderNo: item.orderNo || '-',
-          customerName: item.customerName || '-',
-          power: item.power || '-'
+          customerName: custDisplay,
+          power: powerDisplay
         });
         r.height = 20;
 
@@ -3666,7 +3673,7 @@ export default function App() {
                             <th className="px-5 py-4">Box Attr (该箱属性)</th>
                             <th className="px-5 py-4">Dominant Attr (库位主流)</th>
                             <th className="px-5 py-4">Mismatch (偏差)</th>
-                            <th className="px-5 py-4 pr-8">Target Loc & Reason (推荐去向与原因)</th>
+                            <th className="px-5 py-4 pr-8">Target Loc (推荐库位)</th>
                           </tr>
                         </thead>
                         <tbody className="divide-y divide-slate-50 text-slate-700 text-xs">
@@ -3712,47 +3719,42 @@ export default function App() {
                                   </span>
                                 </td>
                                 <td className="px-5 py-3 pr-8">
-                                  <div className="flex flex-col gap-1.5">
-                                    {row.targetRecommendations && row.targetRecommendations.length > 0 ? (
-                                      <div className="flex flex-wrap items-center gap-1.5">
-                                        {row.targetRecommendations.map((target, tIdx) => (
-                                          <div 
-                                            key={tIdx}
-                                            className={cn(
-                                              "inline-flex items-center gap-1 px-2 py-0.5 rounded-lg text-xs font-mono font-bold border transition-all shadow-2xs",
-                                              tIdx === 0 
-                                                ? (target.isExactMatch 
-                                                    ? "bg-emerald-50 text-emerald-800 border-emerald-300 ring-1 ring-emerald-400/40" 
-                                                    : "bg-blue-50 text-blue-800 border-blue-200")
-                                                : "bg-slate-50 text-slate-700 border-slate-200"
-                                            )}
-                                          >
-                                            <span className="text-[9px] px-1 py-0.2 rounded bg-black/5 text-slate-500">#{tIdx + 1}</span>
-                                            <span className="tracking-tight">{target.loc}</span>
-                                            {target.isExactMatch && (
-                                              <span className="text-[8px] uppercase tracking-wider px-1.5 py-0.5 rounded bg-emerald-600 text-white font-sans font-bold shadow-2xs">
-                                                {target.capacity === 14 ? '满14箱' : '满18箱'}
-                                              </span>
-                                            )}
-                                            <span className="text-[9px] text-slate-400 font-sans font-normal">
-                                              ({target.currentCount}+{row.moveCount || 1}={target.postMoveCount})
+                                  {row.targetRecommendations && row.targetRecommendations.length > 0 ? (
+                                    <div className="flex flex-wrap items-center gap-1.5">
+                                      {row.targetRecommendations.map((target, tIdx) => (
+                                        <div 
+                                          key={tIdx}
+                                          className={cn(
+                                            "inline-flex items-center gap-1 px-2 py-0.5 rounded-lg text-xs font-mono font-bold border transition-all shadow-2xs",
+                                            tIdx === 0 
+                                              ? (target.isExactMatch 
+                                                  ? "bg-emerald-50 text-emerald-800 border-emerald-300 ring-1 ring-emerald-400/40" 
+                                                  : "bg-blue-50 text-blue-800 border-blue-200")
+                                              : "bg-slate-50 text-slate-700 border-slate-200"
+                                          )}
+                                        >
+                                          <span className="text-[9px] px-1 py-0.2 rounded bg-black/5 text-slate-500">#{tIdx + 1}</span>
+                                          <span className="tracking-tight">{target.loc}</span>
+                                          <span className="text-[9px] font-sans font-medium text-emerald-700 bg-emerald-100/60 px-1 py-0.2 rounded">
+                                            ({target.currentCount}箱)
+                                          </span>
+                                          {target.isExactMatch && (
+                                            <span className="text-[8px] uppercase tracking-wider px-1.5 py-0.5 rounded bg-emerald-600 text-white font-sans font-bold shadow-2xs">
+                                              {target.capacity === 14 ? '满14箱' : '满18箱'}
                                             </span>
-                                          </div>
-                                        ))}
-                                      </div>
-                                    ) : (
-                                      <span className={cn(
-                                        "font-bold font-mono flex items-center gap-1 text-xs",
-                                        row.recommendedLoc === '无可用库位 (No Match)' || row.recommendedLoc.includes('无') || row.recommendedLoc.includes('No') ? "text-slate-400" : "text-emerald-600"
-                                      )}>
-                                        <ArrowRight className="w-3 h-3" />
-                                        {row.recommendedLoc}
-                                      </span>
-                                    )}
-                                    <span className="text-[10px] text-slate-600 max-w-xl leading-relaxed whitespace-pre-line font-sans font-medium">
-                                      {row.recommendationReason}
+                                          )}
+                                        </div>
+                                      ))}
+                                    </div>
+                                  ) : (
+                                    <span className={cn(
+                                      "font-bold font-mono flex items-center gap-1 text-xs",
+                                      row.recommendedLoc === '无可用库位 (No Match)' || row.recommendedLoc.includes('无') || row.recommendedLoc.includes('No') ? "text-slate-400" : "text-emerald-600"
+                                    )}>
+                                      <ArrowRight className="w-3 h-3" />
+                                      {row.recommendedLoc}
                                     </span>
-                                  </div>
+                                  )}
                                 </td>
                               </motion.tr>
                             ))
