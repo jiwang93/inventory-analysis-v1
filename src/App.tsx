@@ -108,6 +108,7 @@ interface TargetRecommendation {
   postMoveCount: number;
   capacity: number;
   matchTypeDesc: string;
+  orderRelation?: 'SAME_ORDER' | 'ADJACENT_ORDER' | 'SAME_CUST_POWER' | 'EMPTY';
 }
 
 interface RelocationSuggestion {
@@ -115,6 +116,7 @@ interface RelocationSuggestion {
   currentLoc: string;
   customerName: string;
   powerGrade: string;
+  orderNo?: string;
   dominantCustomer: string;
   dominantPower: string;
   mismatchType: string;
@@ -359,6 +361,33 @@ const findCustomerColumnIndex = (headers: string[]): number => {
     return false;
   });
   return idx;
+};
+
+/**
+ * 校验两个工单号是否为相邻生产工单 (Adjacent Work Orders)
+ * 例如: WO-2026001 与 WO-2026002 (同前缀，数字序列相差 1~3 号)
+ */
+const getOrderNumericPart = (order: string): { prefix: string; num: number } | null => {
+  if (!order || order === '空单号' || order === '-' || order === '未映射客户') return null;
+  const match = order.trim().match(/^(.*?)(\d+)$/);
+  if (match) {
+    return {
+      prefix: match[1].toUpperCase(),
+      num: parseInt(match[2], 10)
+    };
+  }
+  return null;
+};
+
+const isAdjacentOrder = (orderA: string, orderB: string): boolean => {
+  if (!orderA || !orderB || orderA === orderB) return false;
+  const pA = getOrderNumericPart(orderA);
+  const pB = getOrderNumericPart(orderB);
+  if (pA && pB && pA.prefix === pB.prefix) {
+    const diff = Math.abs(pA.num - pB.num);
+    return diff >= 1 && diff <= 3; // 生产工单流水号相差 1~3 号内均属于相邻生产批次
+  }
+  return false;
 };
 
 /**
@@ -1088,15 +1117,18 @@ export default function App() {
     // 箱号由功率的对照字典
     const boxPowerMap: Record<string, string> = {};
     
-    const activeBoxes: { boxNo: string; location: string; power: string; customerName: string }[] = [];
- 
+    const activeBoxes: { boxNo: string; location: string; power: string; customerName: string; orderNo: string }[] = [];
+    // 工单分布：库位 -> Set<工单号>
+    const locationOrderData: Record<string, Set<string>> = {};
+
     // 1. 初始化固定的全量基准库位（保证无论是否有货均作为独立行展现，空置时数量显示为0）
     PREDEFINED_LOCATIONS.forEach(locName => {
       locationMap[locName] = new Set();
       locationPowerData[locName] = {};
       locationCustomerData[locName] = {};
+      locationOrderData[locName] = new Set();
     });
- 
+
     // 2. 处理数据
     rows.forEach((row, rowIdx) => {
       let loc = normalizeLocationName(row['库位名称']);
@@ -1113,6 +1145,7 @@ export default function App() {
         locationMap[loc] = new Set();
         locationPowerData[loc] = {};
         locationCustomerData[loc] = {};
+        locationOrderData[loc] = new Set();
       }
 
       const boxStr = (box !== undefined && box !== null && String(box).trim() !== '')
@@ -1126,7 +1159,8 @@ export default function App() {
         boxNo: boxStr,
         location: loc,
         power: power,
-        customerName: custName
+        customerName: custName,
+        orderNo: orderNo
       });
 
       // 记录库位下的功率分布
@@ -1140,6 +1174,11 @@ export default function App() {
         locationCustomerData[loc][custName] = new Set();
       }
       locationCustomerData[loc][custName].add(boxStr);
+
+      // 记录库位下的工单分布
+      if (orderNo && orderNo !== '空单号' && orderNo !== '-') {
+        locationOrderData[loc].add(orderNo);
+      }
     });
 
     // 汇总分析结果：
@@ -1300,28 +1339,30 @@ export default function App() {
     });
 
     // 统计 H 库位实际占用（包含 A级箱和非A级箱，容量上限14）
-    const hOccupancyMap: Record<string, { count: number; grades: Set<string>; customers: Set<string> }> = {};
+    const hOccupancyMap: Record<string, { count: number; grades: Set<string>; customers: Set<string>; orders: Set<string> }> = {};
     PREDEFINED_LOCATIONS.filter(l => l.toUpperCase().startsWith('H')).forEach(hLoc => {
-      hOccupancyMap[hLoc] = { count: 0, grades: new Set(), customers: new Set() };
+      hOccupancyMap[hLoc] = { count: 0, grades: new Set(), customers: new Set(), orders: new Set() };
     });
     activeBoxes.forEach(b => {
       if (b.location.toUpperCase().startsWith('H')) {
         if (!hOccupancyMap[b.location]) {
-          hOccupancyMap[b.location] = { count: 0, grades: new Set(), customers: new Set() };
+          hOccupancyMap[b.location] = { count: 0, grades: new Set(), customers: new Set(), orders: new Set() };
         }
         hOccupancyMap[b.location].count++;
         if (b.customerName) hOccupancyMap[b.location].customers.add(b.customerName);
+        if (b.orderNo && b.orderNo !== '空单号' && b.orderNo !== '-') hOccupancyMap[b.location].orders.add(b.orderNo);
       }
     });
     nonARows.forEach(item => {
       const loc = normalizeLocationName(item.location);
       if (loc.toUpperCase().startsWith('H')) {
         if (!hOccupancyMap[loc]) {
-          hOccupancyMap[loc] = { count: 0, grades: new Set(), customers: new Set() };
+          hOccupancyMap[loc] = { count: 0, grades: new Set(), customers: new Set(), orders: new Set() };
         }
         hOccupancyMap[loc].count++;
         if (item.grade) hOccupancyMap[loc].grades.add(item.grade);
         if (item.customerName) hOccupancyMap[loc].customers.add(item.customerName);
+        if (item.orderNo && item.orderNo !== '空单号' && item.orderNo !== '-') hOccupancyMap[loc].orders.add(item.orderNo);
       }
     });
 
@@ -1329,11 +1370,23 @@ export default function App() {
 
     // Helper: 寻找常规推荐库位 (供 A 级品使用，容量18，严格排除 H库位 及 包装/WA/pending)
     // 算法核心原则：
-    // 1. 最优先级是“正好匹配凑足18箱” (例如待移动2箱，目标已有16箱，拼成16+2=18满托满架)
-    // 2. 避免单箱孤独占用全新空库位，优先靠拢归并已有存量，最大化凑足18箱
-    // 3. 优先级相同或箱数相同时，严格按照仓库基准 C-N 货架走廊物理顺序排布库位
-    // 4. 给出至多 3 个最佳备选目标库位（如果没有三个，有多少给多少）
-    const findTopRegularLocations = (currentLoc: string, customerName: string, power: string, moveCount: number) => {
+    // 1. 强规则：如果目标库位当前也是混功率、混客户的，坚决不予推荐！非空目标库位必须同客户同功率，避免搬入后造成混载。
+    // 2. 最优先级是“正好匹配凑足18箱” (例如待移动2箱，目标已有16箱，拼成16+2=18满托满架)
+    // 3. 同客户同功率的目标推荐时：
+    //    - 第一优先：同工单批次 (SAME_ORDER)
+    //    - 第二优先：相邻工单批次 (ADJACENT_ORDER)
+    //    - 第三优先：同客户同功率其它工单批次 (SAME_CUST_POWER)
+    // 4. 其次为在库货物合并存量（避免单箱孤独占用新库位，越接近18箱越优先），同样遵循 同工单 > 相邻工单 > 其它工单
+    // 5. 保底方案为干净整洁的全新空置库位
+    // 6. 优先级相同时，严格按照仓库基准 C-N 货架走廊物理顺序排布库位
+    // 7. 给出至多 3 个最佳备选目标库位（如果没有三个，有多少给多少）
+    const findTopRegularLocations = (
+      currentLoc: string, 
+      customerName: string, 
+      power: string, 
+      orderNo: string, 
+      moveCount: number
+    ) => {
       const cap = 18;
       const effectiveMoveCount = Math.max(1, Math.min(cap, moveCount));
 
@@ -1346,6 +1399,7 @@ export default function App() {
         isExactMatch: boolean;
         priority: number;
         matchDesc: string;
+        orderRelation: 'SAME_ORDER' | 'ADJACENT_ORDER' | 'SAME_CUST_POWER' | 'EMPTY';
       }> = [];
 
       Object.entries(locationMap).forEach(([l, bSet]) => {
@@ -1357,54 +1411,84 @@ export default function App() {
         const avail = cap - cnt;
         if (avail < effectiveMoveCount) return; // 容量不足以同时容纳该组批次，避免超容
 
+        // 强规则 1: 如果目标库位也是混功率、混客户的，坚决不推荐！
+        const powersInTarget = Object.keys(locationPowerData[l] || {}).filter(p => (locationPowerData[l][p]?.size || 0) > 0);
+        const customersInTarget = Object.keys(locationCustomerData[l] || {}).filter(c => (locationCustomerData[l][c]?.size || 0) > 0);
+
+        if (powersInTarget.length > 1 || customersInTarget.length > 1) {
+          return; // 目标库位本身已存在混功率或混客户，坚决排除！
+        }
+
+        // 若目标库位已有在库货物 (cnt > 0)
+        // 移入后严禁制造新的混客户、混功率，因此现有货物必须与待移入箱的客户、功率完全一致
+        if (cnt > 0) {
+          const currentTargetCust = customersInTarget[0];
+          const currentTargetPower = powersInTarget[0];
+          if (currentTargetCust !== customerName || currentTargetPower !== power) {
+            return; // 目标库位有其它客户或其它功率，移入会导致混载，坚决排除！
+          }
+        }
+
         const postMoveCount = cnt + effectiveMoveCount;
         const isExactMatch = postMoveCount === cap; // 正好凑足 18 箱！
-        const attrs = locationDominantAttrs[l];
-        const matchCust = attrs?.dominantCustomer === customerName;
-        const matchPower = attrs?.dominantPower === power;
         const isEmpty = cnt === 0;
+
+        // 强规则 2: 分析工单批次关系 (同工单批次优先，第二优先相邻工单批次)
+        const ordersInTarget = locationOrderData[l] || new Set();
+        const hasSameOrder = !!orderNo && orderNo !== '空单号' && orderNo !== '-' && ordersInTarget.has(orderNo);
+        let hasAdjacentOrder = false;
+        if (!hasSameOrder && orderNo && orderNo !== '空单号' && orderNo !== '-') {
+          for (const existingOrder of ordersInTarget) {
+            if (isAdjacentOrder(orderNo, existingOrder)) {
+              hasAdjacentOrder = true;
+              break;
+            }
+          }
+        }
 
         let priority = 100;
         let matchDesc = '';
+        let orderRelation: 'SAME_ORDER' | 'ADJACENT_ORDER' | 'SAME_CUST_POWER' | 'EMPTY' = 'SAME_CUST_POWER';
 
         if (isExactMatch && !isEmpty) {
-          // 正好拼成 18 箱（满托满位，最顶级匹配）
-          if (matchCust && matchPower) {
+          // 正好拼成 18 箱（满托满位，顶级匹配）
+          if (hasSameOrder) {
             priority = 1;
-            matchDesc = `同客户同功率 ${cnt}箱 (调入后满18箱)`;
-          } else if (matchPower) {
+            orderRelation = 'SAME_ORDER';
+            matchDesc = `同工单同功率 ${cnt}箱 (调入后满18箱)`;
+          } else if (hasAdjacentOrder) {
             priority = 2;
-            matchDesc = `同功率 ${cnt}箱 (调入后满18箱)`;
-          } else if (matchCust) {
-            priority = 3;
-            matchDesc = `同客户 ${cnt}箱 (调入后满18箱)`;
+            orderRelation = 'ADJACENT_ORDER';
+            matchDesc = `相邻工单同功率 ${cnt}箱 (调入后满18箱)`;
           } else {
-            priority = 4;
-            matchDesc = `已有 ${cnt}箱 (调入后满18箱)`;
+            priority = 3;
+            orderRelation = 'SAME_CUST_POWER';
+            matchDesc = `同客户同功率 ${cnt}箱 (调入后满18箱)`;
           }
         } else if (!isEmpty) {
-          // 未达正好18箱但已有在库货物（合并存量，避免单箱占用新库位，越接近18越优先）
-          if (matchCust && matchPower) {
+          // 未达正好18箱但已有同客户同功率在库货物（合并存量，避免单箱孤独占用新库位，越接近18越优先）
+          if (hasSameOrder) {
             priority = 10;
-            matchDesc = `同客户同功率 ${cnt}箱 (调入后${postMoveCount}/18箱)`;
-          } else if (matchPower) {
-            priority = 20;
-            matchDesc = `同功率 ${cnt}箱 (调入后${postMoveCount}/18箱)`;
-          } else if (matchCust) {
-            priority = 30;
-            matchDesc = `同客户 ${cnt}箱 (调入后${postMoveCount}/18箱)`;
+            orderRelation = 'SAME_ORDER';
+            matchDesc = `同工单同功率 ${cnt}箱 (调入后${postMoveCount}/18箱)`;
+          } else if (hasAdjacentOrder) {
+            priority = 11;
+            orderRelation = 'ADJACENT_ORDER';
+            matchDesc = `相邻工单同功率 ${cnt}箱 (调入后${postMoveCount}/18箱)`;
           } else {
-            priority = 40;
-            matchDesc = `已有 ${cnt}箱 (调入后${postMoveCount}/18箱)`;
+            priority = 12;
+            orderRelation = 'SAME_CUST_POWER';
+            matchDesc = `同客户同功率 ${cnt}箱 (调入后${postMoveCount}/18箱)`;
           }
         } else {
           // 全新空置库位 (cnt === 0)
+          orderRelation = 'EMPTY';
           if (isExactMatch) {
-            priority = 5;
+            priority = 20;
             matchDesc = `空库位 (直接占满18箱)`;
           } else {
             // 普通箱数放入空库位，作为保底方案（避免单箱孤独占用一整库位）
-            priority = 50;
+            priority = 30;
             matchDesc = `空库位 (调入后${postMoveCount}/18箱)`;
           }
         }
@@ -1417,13 +1501,14 @@ export default function App() {
           postMoveCount,
           isExactMatch,
           priority,
-          matchDesc
+          matchDesc,
+          orderRelation
         });
       });
 
       // 综合精细排序
       candidateList.sort((a, b) => {
-        // 1. 优先级组优先（1~4 为正好拼成18箱，10~40为存量合并，50为空库位）
+        // 1. 优先级组优先（1: 正好18同工单，2: 正好18相邻工单，3: 正好18同客户同功率；10~12为存量合并；20/30为空库位）
         if (a.priority !== b.priority) {
           return a.priority - b.priority;
         }
@@ -1453,7 +1538,8 @@ export default function App() {
         currentCount: c.cnt,
         postMoveCount: c.postMoveCount,
         capacity: c.cap,
-        matchTypeDesc: c.matchDesc
+        matchTypeDesc: c.matchDesc,
+        orderRelation: c.orderRelation
       }));
 
       const formatLocWithBoxes = (loc: string, cnt: number) => `${loc} (${cnt} ${cnt === 1 ? 'box' : 'boxes'})`;
@@ -1473,7 +1559,13 @@ export default function App() {
     };
 
     // Helper: 寻找 H 库位 (专供 非A级品 分配，容量14，严格排除包装/通道/pending)
-    const findTopHLocations = (currentLoc: string, grade: string, customerName: string | undefined, moveCount: number) => {
+    const findTopHLocations = (
+      currentLoc: string, 
+      grade: string, 
+      customerName: string | undefined, 
+      orderNo: string | undefined,
+      moveCount: number
+    ) => {
       const cap = 14;
       const effectiveMoveCount = Math.max(1, Math.min(cap, moveCount));
 
@@ -1486,6 +1578,7 @@ export default function App() {
         isExactMatch: boolean;
         priority: number;
         matchDesc: string;
+        orderRelation: 'SAME_ORDER' | 'ADJACENT_ORDER' | 'SAME_CUST_POWER' | 'EMPTY';
       }> = [];
 
       Object.entries(hOccupancyMap).forEach(([l, info]) => {
@@ -1497,49 +1590,74 @@ export default function App() {
         const avail = cap - cnt;
         if (avail < effectiveMoveCount) return;
 
+        // 强规则 1: 排除已混品级或混客户的 H 库位
+        if (info.grades.size > 1 || info.customers.size > 1) {
+          return;
+        }
+
+        // 若已有库存，必须同等级；若有客户标识且不属于未映射客户，也必须同客户
+        if (cnt > 0) {
+          if (!info.grades.has(grade)) return;
+          if (customerName && customerName !== '未映射客户' && info.customers.size > 0 && !info.customers.has(customerName)) {
+            return;
+          }
+        }
+
         const postMoveCount = cnt + effectiveMoveCount;
         const isExactMatch = postMoveCount === cap;
-        const hasSameGrade = info.grades.has(grade);
-        const hasSameCust = customerName && customerName !== '未映射客户' && info.customers.has(customerName);
         const isEmpty = cnt === 0;
+
+        // 强规则 2: 分析工单关系 (同工单优先，第二优先相邻工单)
+        const hasSameOrder = !!orderNo && orderNo !== '空单号' && orderNo !== '-' && info.orders.has(orderNo);
+        let hasAdjacentOrder = false;
+        if (!hasSameOrder && orderNo && orderNo !== '空单号' && orderNo !== '-') {
+          for (const existingOrder of info.orders) {
+            if (isAdjacentOrder(orderNo, existingOrder)) {
+              hasAdjacentOrder = true;
+              break;
+            }
+          }
+        }
 
         let priority = 100;
         let matchDesc = '';
+        let orderRelation: 'SAME_ORDER' | 'ADJACENT_ORDER' | 'SAME_CUST_POWER' | 'EMPTY' = 'SAME_CUST_POWER';
 
         if (isExactMatch && !isEmpty) {
-          if (hasSameGrade && hasSameCust) {
+          if (hasSameOrder) {
             priority = 1;
-            matchDesc = `同客户/同等级${grade} ${cnt}箱 (调入后满14箱)`;
-          } else if (hasSameGrade) {
+            orderRelation = 'SAME_ORDER';
+            matchDesc = `同工单同等级${grade} ${cnt}箱 (调入后满14箱)`;
+          } else if (hasAdjacentOrder) {
             priority = 2;
-            matchDesc = `同等级${grade} ${cnt}箱 (调入后满14箱)`;
-          } else if (hasSameCust) {
-            priority = 3;
-            matchDesc = `同客户 ${cnt}箱 (调入后满14箱)`;
+            orderRelation = 'ADJACENT_ORDER';
+            matchDesc = `相邻工单同等级${grade} ${cnt}箱 (调入后满14箱)`;
           } else {
-            priority = 4;
-            matchDesc = `已有 ${cnt}箱 (调入后满14箱)`;
+            priority = 3;
+            orderRelation = 'SAME_CUST_POWER';
+            matchDesc = `同等级${grade} ${cnt}箱 (调入后满14箱)`;
           }
         } else if (!isEmpty) {
-          if (hasSameGrade && hasSameCust) {
+          if (hasSameOrder) {
             priority = 10;
-            matchDesc = `同客户/同等级${grade} ${cnt}箱 (调入后${postMoveCount}/14箱)`;
-          } else if (hasSameGrade) {
-            priority = 20;
-            matchDesc = `同等级${grade} ${cnt}箱 (调入后${postMoveCount}/14箱)`;
-          } else if (hasSameCust) {
-            priority = 30;
-            matchDesc = `同客户 ${cnt}箱 (调入后${postMoveCount}/14箱)`;
+            orderRelation = 'SAME_ORDER';
+            matchDesc = `同工单同等级${grade} ${cnt}箱 (调入后${postMoveCount}/14箱)`;
+          } else if (hasAdjacentOrder) {
+            priority = 11;
+            orderRelation = 'ADJACENT_ORDER';
+            matchDesc = `相邻工单同等级${grade} ${cnt}箱 (调入后${postMoveCount}/14箱)`;
           } else {
-            priority = 40;
-            matchDesc = `已有 ${cnt}箱 (调入后${postMoveCount}/14箱)`;
+            priority = 12;
+            orderRelation = 'SAME_CUST_POWER';
+            matchDesc = `同等级${grade} ${cnt}箱 (调入后${postMoveCount}/14箱)`;
           }
         } else {
+          orderRelation = 'EMPTY';
           if (isExactMatch) {
-            priority = 5;
+            priority = 20;
             matchDesc = `空H库位 (直接占满14箱)`;
           } else {
-            priority = 50;
+            priority = 30;
             matchDesc = `空H库位 (调入后${postMoveCount}/14箱)`;
           }
         }
@@ -1552,7 +1670,8 @@ export default function App() {
           postMoveCount,
           isExactMatch,
           priority,
-          matchDesc
+          matchDesc,
+          orderRelation
         });
       });
 
@@ -1584,7 +1703,8 @@ export default function App() {
         currentCount: c.cnt,
         postMoveCount: c.postMoveCount,
         capacity: c.cap,
-        matchTypeDesc: c.matchDesc
+        matchTypeDesc: c.matchDesc,
+        orderRelation: c.orderRelation
       }));
 
       const formatHLocWithBoxes = (loc: string, cnt: number) => `${loc} (${cnt} ${cnt === 1 ? 'box' : 'boxes'})`;
@@ -1616,12 +1736,13 @@ export default function App() {
 
       // 检查情况 1: A 级别品误存放在 H 库位（H 库位专属于非 A 级品）
       if (bx.location.toUpperCase().startsWith('H')) {
-        const rec = findTopRegularLocations(bx.location, bx.customerName, bx.power, moveCount);
+        const rec = findTopRegularLocations(bx.location, bx.customerName, bx.power, bx.orderNo, moveCount);
         suggestions.push({
           boxNo: bx.boxNo,
           currentLoc: bx.location,
           customerName: bx.customerName,
           powerGrade: bx.power,
+          orderNo: bx.orderNo,
           dominantCustomer: locationDominantAttrs[bx.location]?.dominantCustomer || 'Non-A Storage',
           dominantPower: locationDominantAttrs[bx.location]?.dominantPower || '-',
           mismatchType: 'A-Grade in Non-A Zone',
@@ -1635,12 +1756,13 @@ export default function App() {
 
       // 检查情况 2: 存放在临时通道或待定库位 (包装-通道, WA, pending 等)
       if (isInvalidTargetLocation(bx.location)) {
-        const rec = findTopRegularLocations(bx.location, bx.customerName, bx.power, moveCount);
+        const rec = findTopRegularLocations(bx.location, bx.customerName, bx.power, bx.orderNo, moveCount);
         suggestions.push({
           boxNo: bx.boxNo,
           currentLoc: bx.location,
           customerName: bx.customerName,
           powerGrade: bx.power,
+          orderNo: bx.orderNo,
           dominantCustomer: 'Temporary Lane',
           dominantPower: '-',
           mismatchType: 'Temporary Lane Storage',
@@ -1669,13 +1791,14 @@ export default function App() {
           mismatchType = 'Power Mismatch';
         }
 
-        const rec = findTopRegularLocations(bx.location, bx.customerName, bx.power, moveCount);
+        const rec = findTopRegularLocations(bx.location, bx.customerName, bx.power, bx.orderNo, moveCount);
 
         suggestions.push({
           boxNo: bx.boxNo,
           currentLoc: bx.location,
           customerName: bx.customerName,
           powerGrade: bx.power,
+          orderNo: bx.orderNo,
           dominantCustomer: locAttrs.dominantCustomer,
           dominantPower: locAttrs.dominantPower,
           mismatchType,
@@ -1701,12 +1824,13 @@ export default function App() {
 
       // 若非A级品当前不在 H 库位 (例如散落在 C~G, K~O, WA, 包装-通道, pending 等)
       if (!loc.toUpperCase().startsWith('H')) {
-        const rec = findTopHLocations(loc, item.grade, item.customerName, moveCount);
+        const rec = findTopHLocations(loc, item.grade, item.customerName, item.orderNo, moveCount);
         suggestions.push({
           boxNo: item.boxNo,
           currentLoc: loc,
           customerName: item.customerName || '未映射客户',
           powerGrade: item.power || '未知',
+          orderNo: item.orderNo,
           dominantCustomer: locationDominantAttrs[loc]?.dominantCustomer || 'Mixed',
           dominantPower: locationDominantAttrs[loc]?.dominantPower || '-',
           mismatchType: 'Non-A Grade Storage',
@@ -3831,7 +3955,14 @@ export default function App() {
                                 <td className="px-5 py-3">
                                   <div className="flex flex-col">
                                     <span className="font-bold text-slate-800 truncate max-w-[120px]" title={row.customerName}>{row.customerName}</span>
-                                    <span className="font-mono text-slate-400 text-[9px]">P: {row.powerGrade}</span>
+                                    <div className="flex items-center gap-1.5 flex-wrap">
+                                      <span className="font-mono text-slate-400 text-[9px]">P: {row.powerGrade}</span>
+                                      {row.orderNo && row.orderNo !== '空单号' && row.orderNo !== '-' && (
+                                        <span className="font-mono text-slate-500 text-[9px] bg-slate-100 px-1 py-0.2 rounded truncate max-w-[90px]" title={`工单: ${row.orderNo}`}>
+                                          {row.orderNo}
+                                        </span>
+                                      )}
+                                    </div>
                                   </div>
                                 </td>
                                 <td className="px-5 py-3">
@@ -3871,6 +4002,16 @@ export default function App() {
                                           <span className="text-[9px] font-sans font-medium text-emerald-700 bg-emerald-100/60 px-1 py-0.2 rounded">
                                             ({target.currentCount}箱)
                                           </span>
+                                          {target.orderRelation === 'SAME_ORDER' && (
+                                            <span className="text-[8px] px-1 py-0.2 rounded bg-indigo-100 text-indigo-700 font-sans font-bold">
+                                              同工单
+                                            </span>
+                                          )}
+                                          {target.orderRelation === 'ADJACENT_ORDER' && (
+                                            <span className="text-[8px] px-1 py-0.2 rounded bg-sky-100 text-sky-700 font-sans font-bold">
+                                              相邻工单
+                                            </span>
+                                          )}
                                           {target.isExactMatch && (
                                             <span className="text-[8px] uppercase tracking-wider px-1.5 py-0.5 rounded bg-emerald-600 text-white font-sans font-bold shadow-2xs">
                                               {target.capacity === 14 ? '满14箱' : '满18箱'}
