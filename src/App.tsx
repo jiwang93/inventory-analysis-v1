@@ -245,15 +245,120 @@ const compareLocations = (locA: string, locB: string): number => {
 
 /**
  * 来源K列的箱等级归一化分类函数：
- * 识别 B、F、R 等非A级别品
+ * 识别 B、F、R 等非A级别品 (支持中英文表达)
  */
 const getNormalizedGradeCategory = (rawGrade: string): string => {
   const g = String(rawGrade || '').trim().toUpperCase();
   if (!g) return '未标级';
-  if (g.startsWith('B') || g.includes('B级') || g.includes('B等级')) return 'B';
-  if (g.startsWith('F') || g.includes('F级') || g.includes('F等级')) return 'F';
-  if (g.startsWith('R') || g.includes('R级') || g.includes('R等级')) return 'R';
+  if (g.startsWith('B') || g.includes('B级') || g.includes('B等级') || g.includes('GRADE B') || g.includes('GRADE-B') || g === 'B-GRADE') return 'B';
+  if (g.startsWith('F') || g.includes('F级') || g.includes('F等级') || g.includes('GRADE F') || g.includes('GRADE-F') || g === 'F-GRADE') return 'F';
+  if (g.startsWith('R') || g.includes('R级') || g.includes('R等级') || g.includes('GRADE R') || g.includes('GRADE-R') || g === 'R-GRADE') return 'R';
   return g;
+};
+
+/**
+ * 中英文表头智能解析适配器 (Bilingual Header Matchers)
+ * 无论主数据是中文标题还是英文标题，均可自适应识别各关键列
+ */
+const cleanHeaderStr = (h: any): string => {
+  return String(h || '')
+    .trim()
+    .toLowerCase()
+    .replace(/[\s_\-\.\(\)\[\]（）:#/]/g, '');
+};
+
+const findBoxColumnIndex = (headers: string[]): number => {
+  let idx = headers.findIndex(h => {
+    const raw = String(h || '').trim();
+    const clean = cleanHeaderStr(raw);
+    if (raw === '箱号' || raw === '箱码' || raw === '箱' || raw.includes('箱号') || raw.includes('箱码')) return true;
+    if (['boxno', 'boxnumber', 'boxnum', 'boxid', 'boxcode', 'box', 'cartonno', 'cartonnumber', 'carton', 'caseno', 'packageno', 'ctnno', 'ctn', 'barcode', 'serialno'].includes(clean)) return true;
+    if (clean.startsWith('box') && (clean.includes('no') || clean.includes('num') || clean.includes('id') || clean.includes('code'))) return true;
+    return false;
+  });
+  if (idx !== -1) return idx;
+
+  return headers.findIndex(h => {
+    const clean = cleanHeaderStr(h);
+    return clean.includes('box') || clean.includes('carton') || clean.includes('ctn') || String(h).includes('箱');
+  });
+};
+
+const findLocationColumnIndex = (headers: string[]): number => {
+  let idx = headers.findIndex(h => {
+    const raw = String(h || '').trim();
+    const clean = cleanHeaderStr(raw);
+    if (raw === '库位名称' || raw === '库位' || raw === '仓位' || raw === '货位' || raw === '储位' || raw.includes('库位') || raw.includes('仓位')) return true;
+    if (['location', 'locationname', 'loc', 'locname', 'currentloc', 'storagelocation', 'storageloc', 'bin', 'binloc', 'binlocation', 'binno', 'rack', 'slot', 'warehouselocation', 'locno', 'position'].includes(clean)) return true;
+    if (clean.startsWith('loc') && (clean.includes('name') || clean.includes('no') || clean.includes('id') || clean.length <= 4)) return true;
+    return false;
+  });
+  if (idx !== -1) return idx;
+
+  return headers.findIndex(h => {
+    const clean = cleanHeaderStr(h);
+    return clean.includes('location') || clean.includes('storage') || clean.includes('bin') || String(h).includes('库位') || String(h).includes('仓位');
+  });
+};
+
+const findPowerColumnIndex = (headers: string[]): number => {
+  let idx = headers.findIndex(h => {
+    const raw = String(h || '').trim();
+    const clean = cleanHeaderStr(raw);
+    if (raw.includes('功率') || raw.includes('瓦数')) return true;
+    if (['power', 'powergrade', 'powerclass', 'powerbin', 'powerlevel', 'powerw', 'wattage', 'watt', 'wp', 'pwr'].includes(clean)) return true;
+    if (clean.includes('power') || clean.includes('wattage')) return true;
+    return false;
+  });
+  return idx;
+};
+
+const findOrderNoColumnIndex = (headers: string[]): number => {
+  let idx = headers.findIndex(h => {
+    const raw = String(h || '').trim();
+    const clean = cleanHeaderStr(raw);
+    if (raw.includes('工单') || raw.includes('销售单') || raw.includes('生产单') || raw.includes('订单')) return true;
+    if (['orderno', 'ordernumber', 'order', 'salesorderno', 'salesorder', 'workorderno', 'workorder', 'wo', 'so', 'salesno', 'productionorder', 'joborder', 'jobno', 'ordercode'].includes(clean)) return true;
+    if (clean.includes('order') || clean.includes('workorder') || clean.includes('salesorder')) return true;
+    return false;
+  });
+  return idx;
+};
+
+const findGradeColumnIndex = (headers: string[]): number => {
+  let idx = headers.findIndex(h => {
+    const raw = String(h || '').trim();
+    const clean = cleanHeaderStr(raw);
+    if (raw.includes('箱等级') || raw === '等级' || raw.includes('等级') || raw.includes('品级')) return true;
+    if (['grade', 'boxgrade', 'quality', 'qualitygrade', 'class', 'itemgrade', 'gradecode', 'level'].includes(clean)) return true;
+    if (clean.includes('grade') || clean.includes('quality')) return true;
+    return false;
+  });
+  return idx;
+};
+
+const findBarcodeCountColumnIndex = (headers: string[]): number => {
+  let idx = headers.findIndex(h => {
+    const raw = String(h || '').trim();
+    const clean = cleanHeaderStr(raw);
+    if (raw === '箱条码数' || raw.includes('箱条码数') || raw === '条码数' || raw.includes('条码数') || raw.includes('条码数量')) return true;
+    if (['barcodeqty', 'barcodecount', 'barcodequantity', 'barcodes', 'barcode', 'moduleqty', 'piececount', 'pieces', 'pcs', 'quantity', 'qty'].includes(clean)) return true;
+    if (clean.includes('barcode') && (clean.includes('qty') || clean.includes('count') || clean.includes('quantity') || clean.includes('num'))) return true;
+    return false;
+  });
+  return idx;
+};
+
+const findCustomerColumnIndex = (headers: string[]): number => {
+  let idx = headers.findIndex(h => {
+    const raw = String(h || '').trim();
+    const clean = cleanHeaderStr(raw);
+    if (raw.includes('客户') || raw.includes('简称')) return true;
+    if (['customer', 'customername', 'cust', 'client', 'clientname', 'account', 'customerdesc'].includes(clean)) return true;
+    if (clean.includes('customer') || clean.includes('client')) return true;
+    return false;
+  });
+  return idx;
 };
 
 /**
@@ -584,30 +689,40 @@ export default function App() {
 
         const headers = (arrayRows[0] || []).map(h => String(h || '').trim());
         
-        // 查找 [箱号] 和 [库位名称]
-        let boxIdx = headers.findIndex(h => h === '箱号');
-        let locIdx = headers.findIndex(h => h === '库位名称');
-        
-        // 常用标题模糊检测以增强容错
-        if (boxIdx === -1) boxIdx = headers.findIndex(h => h.includes('箱号') || h.includes('箱码'));
-        if (boxIdx === -1) boxIdx = headers.findIndex(h => h === '箱');
-        if (locIdx === -1) locIdx = headers.findIndex(h => h.includes('库位') || h.includes('仓位'));
+        // 查找各关键列 (支持中文、英文及常用缩写规范)
+        let boxIdx = findBoxColumnIndex(headers);
+        let locIdx = findLocationColumnIndex(headers);
+        let powerIdx = findPowerColumnIndex(headers);
+        let orderNoIdx = findOrderNoColumnIndex(headers);
+        let gradeIdx = findGradeColumnIndex(headers);
+        let barcodeCountIdx = findBarcodeCountColumnIndex(headers);
+
+        // 如果未通过表头命名识别到列，按照主数据标准物理列位进行容错兜底
+        if (boxIdx === -1 && arrayRows.length > 1 && arrayRows[1].length > 1) {
+          boxIdx = 1; // Column B
+        }
+        if (locIdx === -1 && arrayRows.length > 1 && arrayRows[1].length > 2) {
+          locIdx = 2; // Column C
+        }
+        if (powerIdx === -1 && arrayRows.length > 1 && arrayRows[1].length > 4) {
+          powerIdx = 4; // Column E
+        }
+        if (orderNoIdx === -1 && arrayRows.length > 1 && arrayRows[1].length > 9) {
+          orderNoIdx = 9; // Column J
+        }
+        if (gradeIdx === -1 && arrayRows.length > 1 && arrayRows[1].length > 10) {
+          gradeIdx = 10; // Column K
+        }
+        if (barcodeCountIdx === -1 && arrayRows.length > 1 && arrayRows[1].length > 18) {
+          barcodeCountIdx = 18; // Column S
+        }
         
         if (boxIdx === -1) {
-          throw new Error('未在主库存表格首行中找到 [箱号] 列');
+          throw new Error('未在主库存表格首行中找到 [箱号 / Box No] 列');
         }
         if (locIdx === -1) {
-          throw new Error('未在主库存表格首行中找到 [库位名称] 列');
+          throw new Error('未在主库存表格首行中找到 [库位名称 / Location] 列');
         }
-
-        // 工单号标题的模糊位置 (作为 column J 越界或为空时的 fallback)
-        let orderNoFallbackIdx = headers.findIndex(h => h.includes('工单') || h.includes('销售单') || h.toLowerCase().includes('order'));
-
-        // 箱等级标题的模糊位置 (作为 column K 越界或为空时的 fallback)
-        let gradeIdx = headers.findIndex(h => h.includes('箱等级') || h === '等级' || h.includes('等级') || h.toLowerCase() === 'grade');
-
-        // 箱条码数标题的模糊位置 (作为 column S 越界或为空时的 fallback)
-        let barcodeCountIdx = headers.findIndex(h => h === '箱条码数' || h.includes('箱条码数') || h === '条码数' || h.includes('条码数') || h.includes('条码数量'));
 
         const parsedData: InventoryRow[] = [];
         const nonAGradeListLocal: NonAGradeRow[] = [];
@@ -631,28 +746,34 @@ export default function App() {
           
           totalRowsCount++;
 
-          const boxVal = rowArr[boxIdx] !== undefined && rowArr[boxIdx] !== null ? String(rowArr[boxIdx]).trim() : '';
-          const locVal = rowArr[locIdx] !== undefined && rowArr[locIdx] !== null ? String(rowArr[locIdx]).trim() : '';
+          const boxVal = (boxIdx !== -1 && rowArr[boxIdx] !== undefined && rowArr[boxIdx] !== null) ? String(rowArr[boxIdx]).trim() : '';
+          const locVal = (locIdx !== -1 && rowArr[locIdx] !== undefined && rowArr[locIdx] !== null) ? String(rowArr[locIdx]).trim() : '';
           
-          // 按用户要求：主库存表中每一箱的工单号在 J 列（Column J 是第 10 列，0-based 索引为 9）
+          // 工单号 (优先使用识别到的列，其次降级为 Column J 索引 9)
           let orderNoVal = '';
-          if (rowArr.length > 9 && rowArr[9] !== undefined && rowArr[9] !== null && String(rowArr[9]).trim() !== '') {
+          if (orderNoIdx !== -1 && rowArr[orderNoIdx] !== undefined && rowArr[orderNoIdx] !== null && String(rowArr[orderNoIdx]).trim() !== '') {
+            orderNoVal = String(rowArr[orderNoIdx]).trim();
+          } else if (rowArr.length > 9 && rowArr[9] !== undefined && rowArr[9] !== null && String(rowArr[9]).trim() !== '') {
             orderNoVal = String(rowArr[9]).trim();
-          } else if (orderNoFallbackIdx !== -1 && rowArr[orderNoFallbackIdx] !== undefined && rowArr[orderNoFallbackIdx] !== null) {
-            orderNoVal = String(rowArr[orderNoFallbackIdx]).trim();
           }
 
-          // 箱等级在 K 列（Column K 是第 11 列，0-based 索引为 10）
+          // 箱等级 (优先使用识别到的列，其次降级为 Column K 索引 10)
           let gradeVal = '';
-          if (rowArr.length > 10 && rowArr[10] !== undefined && rowArr[10] !== null && String(rowArr[10]).trim() !== '') {
-            gradeVal = String(rowArr[10]).trim();
-          } else if (gradeIdx !== -1 && rowArr[gradeIdx] !== undefined && rowArr[gradeIdx] !== null) {
+          if (gradeIdx !== -1 && rowArr[gradeIdx] !== undefined && rowArr[gradeIdx] !== null && String(rowArr[gradeIdx]).trim() !== '') {
             gradeVal = String(rowArr[gradeIdx]).trim();
+          } else if (rowArr.length > 10 && rowArr[10] !== undefined && rowArr[10] !== null && String(rowArr[10]).trim() !== '') {
+            gradeVal = String(rowArr[10]).trim();
           }
 
-          let powerIdx = headers.findIndex(h => h.includes('功率'));
-          const powerVal = powerIdx !== -1 ? rowArr[powerIdx] : undefined;
-          const powerStr = powerVal !== undefined && powerVal !== null ? String(powerVal).trim() : '未知';
+          // 功率档 (优先使用识别到的列，其次降级为 Column E 索引 4)
+          let powerVal = (powerIdx !== -1 && rowArr[powerIdx] !== undefined && rowArr[powerIdx] !== null) ? rowArr[powerIdx] : undefined;
+          if (powerVal === undefined && rowArr.length > 4 && rowArr[4] !== undefined && rowArr[4] !== null) {
+            const candidate = String(rowArr[4]).trim();
+            if (/^\d{3}/.test(candidate)) {
+              powerVal = candidate;
+            }
+          }
+          const powerStr = (powerVal !== undefined && powerVal !== null && String(powerVal).trim() !== '') ? String(powerVal).trim() : '未知';
 
           // 记录箱号出现特征（用于排查 8 箱差额是否来源于重复箱号或空箱号）
           if (boxVal === '') {
@@ -744,17 +865,22 @@ export default function App() {
             continue;
           }
 
-          // 仅统计A等级: A, A等级, A级, a等级, a, etc. (不区分大小写，或startsWith 'A')
-          const cleanGrade = gradeVal.trim().toUpperCase().replace(/\s+/g, '');
+          // 仅统计A等级: A, A等级, A级, Grade A, Class A, A-Grade, etc. (不区分大小写，支持中英文)
+          const cleanGrade = gradeVal.trim().toUpperCase().replace(/[\s\-_]/g, '');
           const isGradeA = cleanGrade === 'A' || 
                            cleanGrade === 'A级' || 
                            cleanGrade === 'A等级' || 
                            cleanGrade === 'A品' || 
                            cleanGrade === 'A类' || 
+                           cleanGrade === 'GRADEA' ||
+                           cleanGrade === 'AGRADE' ||
+                           cleanGrade === 'CLASSA' ||
+                           cleanGrade === 'A+' ||
                            cleanGrade.startsWith('A+') || 
                            cleanGrade.startsWith('A-') || 
                            cleanGrade.startsWith('A_') || 
                            /^A\d+$/.test(cleanGrade) ||
+                           cleanGrade === 'A等级' ||
                            cleanGrade === 'A-等级';
 
           if (!isGradeA) {
@@ -871,43 +997,50 @@ export default function App() {
           throw new Error('对照表为空或格式不正确');
         }
 
-        // 读取首行做模糊寻址 fallback（如果个别单元格由于某些缘故未对齐B/F）
+        // 读取首行进行中英文表头识别与模糊寻址
         const firstRow = arrayRows[0] || [];
         const headers = firstRow.map(h => String(h || '').trim());
         
-        let orderFallbackIndex = headers.findIndex(h => h.includes('工单') || h.includes('销售单') || h.toLowerCase().includes('order'));
-        let customerFallbackIndex = headers.findIndex(h => h.includes('客户') || h.toLowerCase().includes('customer') || h.toLowerCase().includes('client') || h.includes('简称'));
+        let orderColIdx = findOrderNoColumnIndex(headers);
+        let customerColIdx = findCustomerColumnIndex(headers);
 
-        // 如果首行包含了标志性文字词组，认为它是一行表头，跳过不当作实际数据映射
+        // 如果首行包含了标志性文字词组（中文或英文），认为它是一行表头，跳过不当作实际数据映射
         let startRowIndex = 0;
+        const aCellVal = String(firstRow[0] || '').trim();
         const bCellVal = String(firstRow[1] || '').trim();
         const fCellVal = String(firstRow[5] || '').trim();
-        if (bCellVal.includes('单号') || bCellVal.includes('工单') || fCellVal.includes('客户') || fCellVal.includes('简称')) {
+        const isHeaderRow = /order|wo|so|sales|工单|单号|销售单|订单/i.test(bCellVal) || 
+                            /customer|client|cust|客户|简称/i.test(fCellVal) ||
+                            /no\.|seq|序号/i.test(aCellVal) ||
+                            orderColIdx !== -1 ||
+                            customerColIdx !== -1;
+
+        if (isHeaderRow) {
           startRowIndex = 1;
         }
+
+        // 默认匹配列位：优先使用识别出的列索引；若未命中则降级为用户常规定义的 Column B (index 1) 和 Column F (index 5)
+        const effectiveOrderIdx = orderColIdx !== -1 ? orderColIdx : 1;
+        const effectiveCustIdx = customerColIdx !== -1 ? customerColIdx : 5;
 
         const newMap: Record<string, string> = {};
         for (let i = startRowIndex; i < arrayRows.length; i++) {
           const rowArr = arrayRows[i];
           if (!rowArr || rowArr.length === 0) continue;
 
-          // 用户强规则对应：Column B (index 1) 和 Column F (index 5)
-          let orderVal = '';
-          let custVal = '';
+          let orderVal = (rowArr[effectiveOrderIdx] !== undefined && rowArr[effectiveOrderIdx] !== null) 
+            ? String(rowArr[effectiveOrderIdx]).trim() 
+            : '';
+          let custVal = (rowArr[effectiveCustIdx] !== undefined && rowArr[effectiveCustIdx] !== null) 
+            ? String(rowArr[effectiveCustIdx]).trim() 
+            : '';
 
-          if (rowArr.length > 1 && rowArr[1] !== undefined && rowArr[1] !== null) {
+          // 兜底互相尝试 (如果有效列未取到，降级尝试第1列/第5列)
+          if (!orderVal && rowArr.length > 1 && rowArr[1] !== undefined && rowArr[1] !== null) {
             orderVal = String(rowArr[1]).trim();
           }
-          if (rowArr.length > 5 && rowArr[5] !== undefined && rowArr[5] !== null) {
+          if (!custVal && rowArr.length > 5 && rowArr[5] !== undefined && rowArr[5] !== null) {
             custVal = String(rowArr[5]).trim();
-          }
-
-          // 模糊兜底 (如果B和F提取为空且首行探测到了匹配的列字段)
-          if (!orderVal && orderFallbackIndex !== -1 && rowArr[orderFallbackIndex] !== undefined && rowArr[orderFallbackIndex] !== null) {
-            orderVal = String(rowArr[orderFallbackIndex]).trim();
-          }
-          if (!custVal && customerFallbackIndex !== -1 && rowArr[customerFallbackIndex] !== undefined && rowArr[customerFallbackIndex] !== null) {
-            custVal = String(rowArr[customerFallbackIndex]).trim();
           }
 
           if (orderVal && custVal) {
@@ -2409,15 +2542,15 @@ export default function App() {
     if (zeroBarcodeList.length === 0) return;
     try {
       const workbook = new ExcelJS.Workbook();
-      const worksheet = workbook.addWorksheet('Zero Barcodes (条码为0)');
+      const worksheet = workbook.addWorksheet('Zero Barcodes');
       worksheet.columns = [
-        { header: 'Row No. (原行号)', key: 'rowIdx', width: 14 },
-        { header: 'Box No. (箱号)', key: 'boxNo', width: 24 },
-        { header: 'Location (库位)', key: 'location', width: 14 },
-        { header: 'Grade (等级-Col K)', key: 'grade', width: 16 },
-        { header: 'Raw Barcode (原值-Col S)', key: 'rawBarcode', width: 18 },
-        { header: 'Order No. (工单号)', key: 'orderNo', width: 20 },
-        { header: 'Filter Reason (过滤原因)', key: 'reason', width: 30 }
+        { header: 'Row No.', key: 'rowIdx', width: 12 },
+        { header: 'Box No.', key: 'boxNo', width: 22 },
+        { header: 'Location', key: 'location', width: 14 },
+        { header: 'Grade (Col K)', key: 'grade', width: 14 },
+        { header: 'Raw Barcode (Col S)', key: 'rawBarcode', width: 18 },
+        { header: 'Order No.', key: 'orderNo', width: 20 },
+        { header: 'Filter Reason', key: 'reason', width: 30 }
       ];
       worksheet.views = [{ showGridLines: true }];
       const headerRow = worksheet.getRow(1);
@@ -2460,11 +2593,11 @@ export default function App() {
       const workbook = new ExcelJS.Workbook();
 
       // Sheet 1: Audit Overview
-      const summarySheet = workbook.addWorksheet('Audit Overview (勾稽总览)');
+      const summarySheet = workbook.addWorksheet('Audit Overview');
       summarySheet.columns = [
-        { header: 'Audit Item (核查项目)', key: 'item', width: 30 },
-        { header: 'Value (数量/数值)', key: 'value', width: 18 },
-        { header: 'Notes (特点与说明)', key: 'notes', width: 50 }
+        { header: 'Audit Item', key: 'item', width: 30 },
+        { header: 'Value', key: 'value', width: 18 },
+        { header: 'Notes', key: 'notes', width: 50 }
       ];
       summarySheet.views = [{ showGridLines: true }];
       const h1 = summarySheet.getRow(1);
@@ -2484,27 +2617,27 @@ export default function App() {
         });
       };
 
-      addSummaryRow('1. Raw Imported Rows (原始总行数)', `${totalRowsRaw}`, 'Total physical rows in source Excel');
-      addSummaryRow('2. Zero-Barcode Filtered (条码为0过滤)', `-${auditReport.zeroBarcodeBreakdown.total}`, 'Explicit 0 barcode rows excluded');
-      addSummaryRow('3. Valid Boxes Included (有效总箱数)', `${totalRowsRaw - auditReport.zeroBarcodeBreakdown.total}`, 'Formula: 7,380 - 23 = 7,357 boxes');
-      addSummaryRow('   ├─ Grade-A Boxes (A级良品箱数)', `${data.length}`, 'Included in primary warehouse analytics');
-      addSummaryRow('   └─ Non-A Grade (非A级品箱数 B/F/R)', `${nonAGradeCount}`, 'Managed & exported independently');
-      addSummaryRow('4. 8-Box Gap Diagnostics (8箱差异原因)', 'Gap: 8 Boxes', '7,372 - 23 = 7,349 vs 7,357; 7,380 - 7,372 = 8 rows gap in raw table');
-      addSummaryRow('5. Duplicate Box Rows (重复箱号行数)', `${auditReport.duplicateRowCount}`, auditReport.duplicateRowCount > 0 ? `${auditReport.duplicateBoxes.length} box numbers appeared multiple times` : 'None');
-      addSummaryRow('6. Blank Box Rows (空箱号行数)', `${auditReport.emptyBoxRows.length}`, auditReport.emptyBoxRows.length > 0 ? `Rows: ${auditReport.emptyBoxRows.map(x => x.rowIdx).join(', ')}` : 'None');
-      addSummaryRow('7. Unassigned Loc Rows (未分配库位)', `${auditReport.emptyLocRows.length}`, auditReport.emptyLocRows.length > 0 ? `Rows: ${auditReport.emptyLocRows.map(x => x.rowIdx).join(', ')}` : 'None');
+      addSummaryRow('1. Raw Imported Rows', `${totalRowsRaw}`, 'Total physical rows in source Excel');
+      addSummaryRow('2. Zero-Barcode Filtered', `-${auditReport.zeroBarcodeBreakdown.total}`, 'Explicit 0 barcode rows excluded');
+      addSummaryRow('3. Valid Boxes Included', `${totalRowsRaw - auditReport.zeroBarcodeBreakdown.total}`, 'Formula: 7,380 - 23 = 7,357 boxes');
+      addSummaryRow('   ├─ Grade-A Boxes', `${data.length}`, 'Included in primary warehouse analytics');
+      addSummaryRow('   └─ Non-A Grade (B/F/R)', `${nonAGradeCount}`, 'Managed & exported independently');
+      addSummaryRow('4. 8-Box Gap Diagnostics', 'Gap: 8 Boxes', '7,372 - 23 = 7,349 vs 7,357; 7,380 - 7,372 = 8 rows gap in raw table');
+      addSummaryRow('5. Duplicate Box Rows', `${auditReport.duplicateRowCount}`, auditReport.duplicateRowCount > 0 ? `${auditReport.duplicateBoxes.length} box numbers appeared multiple times` : 'None');
+      addSummaryRow('6. Blank Box Rows', `${auditReport.emptyBoxRows.length}`, auditReport.emptyBoxRows.length > 0 ? `Rows: ${auditReport.emptyBoxRows.map(x => x.rowIdx).join(', ')}` : 'None');
+      addSummaryRow('7. Unassigned Loc Rows', `${auditReport.emptyLocRows.length}`, auditReport.emptyLocRows.length > 0 ? `Rows: ${auditReport.emptyLocRows.map(x => x.rowIdx).join(', ')}` : 'None');
 
       // Sheet 2: Duplicate Boxes
       if (auditReport.duplicateBoxes.length > 0) {
-        const dupSheet = workbook.addWorksheet('Duplicates (重复箱号)');
+        const dupSheet = workbook.addWorksheet('Duplicates');
         dupSheet.columns = [
-          { header: 'Row No. (原行号)', key: 'rowIdx', width: 14 },
-          { header: 'Box No. (箱号)', key: 'boxNo', width: 24 },
-          { header: 'Location (库位)', key: 'location', width: 16 },
-          { header: 'Grade (等级)', key: 'grade', width: 14 },
-          { header: 'Power (功率)', key: 'power', width: 16 },
-          { header: 'Order No. (工单号)', key: 'orderNo', width: 20 },
-          { header: 'Notes (特征说明)', key: 'desc', width: 28 }
+          { header: 'Row No.', key: 'rowIdx', width: 14 },
+          { header: 'Box No.', key: 'boxNo', width: 24 },
+          { header: 'Location', key: 'location', width: 16 },
+          { header: 'Grade', key: 'grade', width: 14 },
+          { header: 'Power', key: 'power', width: 16 },
+          { header: 'Order No.', key: 'orderNo', width: 20 },
+          { header: 'Notes', key: 'desc', width: 28 }
         ];
         dupSheet.views = [{ showGridLines: true }];
         const h2 = dupSheet.getRow(1);
@@ -2535,15 +2668,15 @@ export default function App() {
       }
 
       // Sheet 3: Zero Barcode Filtered
-      const zeroSheet = workbook.addWorksheet('Zero Barcodes (0条码明细)');
+      const zeroSheet = workbook.addWorksheet('Zero Barcodes');
       zeroSheet.columns = [
-        { header: 'Row No. (原行号)', key: 'rowIdx', width: 14 },
-        { header: 'Box No. (箱号)', key: 'boxNo', width: 24 },
-        { header: 'Location (库位)', key: 'location', width: 16 },
+        { header: 'Row No.', key: 'rowIdx', width: 14 },
+        { header: 'Box No.', key: 'boxNo', width: 24 },
+        { header: 'Location', key: 'location', width: 16 },
         { header: 'Grade (Col K)', key: 'grade', width: 14 },
         { header: 'Raw Barcode (Col S)', key: 'rawBarcode', width: 16 },
-        { header: 'Order No. (工单号)', key: 'orderNo', width: 20 },
-        { header: 'Reason (原因)', key: 'reason', width: 28 }
+        { header: 'Order No.', key: 'orderNo', width: 20 },
+        { header: 'Reason', key: 'reason', width: 28 }
       ];
       zeroSheet.views = [{ showGridLines: true }];
       const h3 = zeroSheet.getRow(1);
